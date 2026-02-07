@@ -1,6 +1,6 @@
-import { PersonaConfig } from "./config";
+import { PersonaConfig, WorkspaceFiles } from "./config";
 
-// Traefik docker-compose (File provider, 고정 Docker 네트워크)
+// Traefik docker-compose (File provider)
 function generateTraefikCompose(domain: string): string {
   return `services:
   traefik:
@@ -40,7 +40,7 @@ volumes:
 `;
 }
 
-// Traefik 동적 라우팅 설정 (호스트의 OpenClaw Gateway로 프록시)
+// Traefik dynamic routing config
 function generateTraefikDynamic(domain: string): string {
   return `http:
   routers:
@@ -59,10 +59,11 @@ function generateTraefikDynamic(domain: string): string {
 `;
 }
 
-// User Data 스크립트 생성 (openclaw onboard 기반)
+// User Data script generation
 export function generateUserData(
   persona: PersonaConfig,
-  domain: string
+  domain: string,
+  workspaceFiles: WorkspaceFiles
 ): string {
   const traefikCompose = generateTraefikCompose(domain);
   const traefikDynamic = generateTraefikDynamic(domain);
@@ -71,12 +72,13 @@ export function generateUserData(
 set -euo pipefail
 exec > >(tee /var/log/user-data.log) 2>&1
 echo "=== User Data started at $(date) ==="
+echo "=== Persona: ${persona.name} ==="
 
 # --- Node.js 22 + Docker ---
 curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
 dnf install -y nodejs docker git
 
-# --- Docker Compose V2 플러그인 (AL2023 기본 미포함) ---
+# --- Docker Compose V2 plugin (AL2023 default missing) ---
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
   -o /usr/local/lib/docker/cli-plugins/docker-compose
@@ -86,32 +88,53 @@ chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 npm install -g openclaw@latest
 echo "OpenClaw version: $(openclaw --version)"
 
-# --- systemd user 서비스를 위한 linger 활성화 ---
-# onboard --install-daemon이 자동으로 시도하지만, root에서 먼저 호출 (safety net)
+# --- systemd user linger ---
 loginctl enable-linger ec2-user
 
-# --- 상태 디렉토리 ---
+# --- State directory ---
 STATE_DIR=/opt/openclaw
 mkdir -p $STATE_DIR
 chown ec2-user:ec2-user $STATE_DIR
 chmod 700 $STATE_DIR
 
-# --- 환경변수 파일 (.env) ---
+# --- Environment file (.env) ---
 cat > $STATE_DIR/.env << 'ENVEOF'
 OPENCLAW_STATE_DIR=/opt/openclaw
 OPENCLAW_GATEWAY_TOKEN=${persona.env.OPENCLAW_GATEWAY_TOKEN}
 SLACK_BOT_TOKEN=${persona.env.SLACK_BOT_TOKEN}
 SLACK_APP_TOKEN=${persona.env.SLACK_APP_TOKEN}
+OPENCLAW_DISABLE_BONJOUR=1
 ENVEOF
 chown ec2-user:ec2-user $STATE_DIR/.env
 chmod 600 $STATE_DIR/.env
 
-# --- 환경변수 로드 ---
+# --- Load environment ---
 set -a
 source $STATE_DIR/.env
 set +a
 
-# --- OpenClaw onboard (비대화형, 공식 경로) ---
+# --- Workspace files (BEFORE onboard -- writeFileIfMissing won't overwrite) ---
+WORKSPACE_DIR=/home/ec2-user/.openclaw/workspace
+sudo -u ec2-user mkdir -p $WORKSPACE_DIR
+
+cat > $WORKSPACE_DIR/SOUL.md << 'SOULEOF'
+${workspaceFiles.soul}
+SOULEOF
+chown ec2-user:ec2-user $WORKSPACE_DIR/SOUL.md
+
+cat > $WORKSPACE_DIR/IDENTITY.md << 'IDENTITYEOF'
+${workspaceFiles.identity}
+IDENTITYEOF
+chown ec2-user:ec2-user $WORKSPACE_DIR/IDENTITY.md
+
+cat > $WORKSPACE_DIR/AGENTS.md << 'AGENTSEOF'
+${workspaceFiles.agents}
+AGENTSEOF
+chown ec2-user:ec2-user $WORKSPACE_DIR/AGENTS.md
+
+echo "=== Workspace files deployed ==="
+
+# --- OpenClaw onboard (non-interactive) ---
 EC2_USER_UID=$(id -u ec2-user)
 sudo -u ec2-user \\
   OPENCLAW_STATE_DIR=$STATE_DIR \\
@@ -133,12 +156,29 @@ sudo -u ec2-user \\
 
 echo "=== onboard completed ==="
 
-# --- 추가 설정 (onboard 이후) ---
+# --- Post-onboard config ---
 sudo -u ec2-user \\
   OPENCLAW_STATE_DIR=$STATE_DIR \\
   openclaw config set tools.exec.ask always
 
-# --- trustedProxies 설정 (Traefik Docker IP) ---
+# --- Security hardening ---
+sudo -u ec2-user \\
+  OPENCLAW_STATE_DIR=$STATE_DIR \\
+  openclaw config set channels.defaults.groupPolicy allowlist
+
+sudo -u ec2-user \\
+  OPENCLAW_STATE_DIR=$STATE_DIR \\
+  openclaw config set channels.slack.groupPolicy allowlist
+
+sudo -u ec2-user \\
+  OPENCLAW_STATE_DIR=$STATE_DIR \\
+  openclaw config set logging.redactSensitive tools
+
+sudo -u ec2-user \\
+  OPENCLAW_STATE_DIR=$STATE_DIR \\
+  openclaw config set logging.redactPatterns --json '["xoxb-","xapp-","sk-ant-"]'
+
+# --- trustedProxies (Traefik Docker IP) ---
 sudo -u ec2-user \\
   OPENCLAW_STATE_DIR=$STATE_DIR \\
   node -e "
@@ -150,7 +190,7 @@ sudo -u ec2-user \\
     fs.writeFileSync(p, JSON.stringify(c, null, 2));
   "
 
-# --- systemd 서비스에 Slack 환경변수 주입 ---
+# --- Inject Slack env vars into systemd service ---
 SYSTEMD_DIR=/home/ec2-user/.config/systemd/user/openclaw-gateway.service.d
 sudo -u ec2-user mkdir -p $SYSTEMD_DIR
 cat > $SYSTEMD_DIR/env.conf << OVERRIDEEOF
@@ -159,7 +199,7 @@ EnvironmentFile=$STATE_DIR/.env
 OVERRIDEEOF
 chown ec2-user:ec2-user $SYSTEMD_DIR/env.conf
 
-# --- Gateway 재시작 (설정 반영) ---
+# --- Restart Gateway (apply config) ---
 sudo -u ec2-user \\
   XDG_RUNTIME_DIR=/run/user/$EC2_USER_UID \\
   DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$EC2_USER_UID/bus \\
@@ -170,7 +210,7 @@ sudo -u ec2-user \\
   DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$EC2_USER_UID/bus \\
   systemctl --user restart openclaw-gateway || true
 
-# --- Traefik (HTTPS 리버스 프록시) ---
+# --- Traefik (HTTPS reverse proxy) ---
 systemctl enable --now docker
 
 cat > $STATE_DIR/traefik-dynamic.yml << 'DYNAMICEOF'

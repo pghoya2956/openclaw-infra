@@ -1,6 +1,6 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
-import { PersonaConfig, awsConfig, loadWorkspaceFiles } from "./config";
+import { PersonaConfig, awsConfig, infraConfig, loadWorkspaceFiles } from "./config";
 import { generateUserData } from "./templates";
 
 // Get latest Amazon Linux 2023 AMI
@@ -48,11 +48,7 @@ export function createInstance(
       Name: `openclaw-${persona.name}`,
       Project: "OpenClaw",
       Persona: persona.name,
-      // Required tags by IAM policy
-      Owner: "Chad",
-      Purpose: "OpenClaw AI Assistant POC",
-      Environment: "sandbox",
-      Expiry: "2026-03-31",
+      ...infraConfig.tags,
     },
   });
 }

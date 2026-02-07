@@ -21,6 +21,9 @@ infra/.pulumi/
 .DS_Store
 Thumbs.db
 
+# Task execution history (environment-specific info)
+tasks/
+
 # Claude Code session data
 .claude/projects/
 .claude/todos/

@@ -11,7 +11,7 @@ description: |
 ## 전제 조건
 
 - SSH 접속 가능 (`~/.ssh/id_ed25519`)
-- `AWS_PROFILE=sandbox`
+- AWS CLI 인증 (프로필 또는 환경변수)
 
 ## Workflow
 
@@ -25,7 +25,7 @@ description: |
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ec2-user@<IP> "bash -s" \
-  < /Users/infograb/Workspace/OpenClaw/.claude/skills/security-audit/scripts/collect.sh
+  < .claude/skills/security-audit/scripts/collect.sh
 ```
 
 ### Step C: Security Group 점검

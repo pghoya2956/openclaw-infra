@@ -1,7 +1,7 @@
-import { PersonaConfig, WorkspaceFiles } from "./config";
+import { PersonaConfig, WorkspaceFiles, infraConfig } from "./config";
 
 // Traefik docker-compose (File provider)
-function generateTraefikCompose(domain: string): string {
+function generateTraefikCompose(domain: string, acmeEmail: string): string {
   return `services:
   traefik:
     image: traefik:v3.0
@@ -12,7 +12,7 @@ function generateTraefikCompose(domain: string): string {
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.letsencrypt.acme.email=chad@infograb.net"
+      - "--certificatesresolvers.letsencrypt.acme.email=${acmeEmail}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
     ports:
@@ -65,7 +65,7 @@ export function generateUserData(
   domain: string,
   workspaceFiles: WorkspaceFiles
 ): string {
-  const traefikCompose = generateTraefikCompose(domain);
+  const traefikCompose = generateTraefikCompose(domain, infraConfig.acmeEmail);
   const traefikDynamic = generateTraefikDynamic(domain);
 
   return `#!/bin/bash

@@ -22,7 +22,7 @@ Pulumi IaC로 AWS EC2에 OpenClaw 인스턴스를 배포한다. 페르소나별 
   Traefik (HTTPS)    Traefik (HTTPS)         Traefik (HTTPS)
        │                   │                       │
   lab.openclaw.      product.openclaw.       growth.openclaw.
-  sbx.infograb.io    sbx.infograb.io         sbx.infograb.io
+  {BASE_DOMAIN}      {BASE_DOMAIN}           {BASE_DOMAIN}
 ```
 
 각 EC2 내부:
@@ -39,23 +39,24 @@ EC2 (t3.medium, Amazon Linux 2023)
 
 ## 페르소나
 
-| 이름 | 도메인 | 역할 |
-|------|--------|------|
-| lab | lab.openclaw.sbx.infograb.io | 범용 AI 어시스턴트 |
-| product-leader | product.openclaw.sbx.infograb.io | 제품 전략, 우선순위, 로드맵 |
-| engineering-lead | eng.openclaw.sbx.infograb.io | 아키텍처, 기술 의사결정 |
-| growth-expert | growth.openclaw.sbx.infograb.io | 퍼널 분석, 성장 전략 |
+| 이름 | 서브도메인 | 역할 |
+|------|-----------|------|
+| lab | lab.openclaw | 범용 AI 어시스턴트 |
+| product-leader | product.openclaw | 제품 전략, 우선순위, 로드맵 |
+| engineering-lead | eng.openclaw | 아키텍처, 기술 의사결정 |
+| growth-expert | growth.openclaw | 퍼널 분석, 성장 전략 |
 | ceo-advisor | ceo.openclaw | CEO 관점 의사결정 |
 | strategy-consultant | strategy.openclaw | 전략 분석 |
 | design-director | design.openclaw | UX/UI 디자인 |
 | data-scientist | data.openclaw | 데이터 분석, 실험 설계 |
 | marketing-director | marketing.openclaw | 마케팅 전략 |
 
+각 페르소나의 전체 도메인은 `{subdomain}.{BASE_DOMAIN}` 형태 (예: `lab.openclaw.example.com`).
 상위 4개가 현재 배포 대상. 나머지 5개는 워크스페이스 파일만 준비됨.
 
 ## 사전 요구사항
 
-- AWS CLI + 프로필 (`AWS_PROFILE`)
+- AWS CLI + 프로필
 - Pulumi CLI
 - Node.js 18+
 - Anthropic Max 요금제 (Setup Token 발급용)
@@ -65,24 +66,43 @@ EC2 (t3.medium, Amazon Linux 2023)
 
 ```bash
 # 서브모듈 포함 clone
-git clone --recurse-submodules https://github.com/pghoya2956/openclaw-infra.git
+git clone --recurse-submodules https://github.com/your-username/openclaw-infra.git
 cd openclaw-infra/infra
 npm install
 
+# 인프라 환경변수 설정
+cp .env.example .env
+# .env 편집 (AWS VPC, 도메인, 태그 등)
+
 # 페르소나별 시크릿 파일 생성
 cp .env.example .env.lab
-# .env.lab 편집 (토큰 채우기)
+# .env.lab 편집 (Slack/Anthropic 토큰)
 
 # 배포
-export AWS_PROFILE=sandbox
 export ENABLED_PERSONAS=lab
 pulumi preview
 pulumi up
 ```
 
-## 시크릿 설정
+## 환경변수
 
-각 페르소나별 `infra/.env.{name}` 파일이 필요하다:
+### 인프라 공용 (`infra/.env`)
+
+| 변수 | 필수 | 설명 |
+|------|------|------|
+| `AWS_VPC_ID` | O | VPC ID |
+| `AWS_SUBNET_ID` | O | Public Subnet ID |
+| `AWS_KEY_NAME` | O | EC2 Key Pair 이름 |
+| `AWS_HOSTED_ZONE_ID` | O | Route53 Hosted Zone ID |
+| `BASE_DOMAIN` | O | 베이스 도메인 |
+| `ACME_EMAIL` | O | Let's Encrypt 이메일 |
+| `EC2_TAG_OWNER` | O | EC2 태그 Owner |
+| `EC2_TAG_PURPOSE` | | 기본: `OpenClaw AI Assistant` |
+| `EC2_TAG_ENVIRONMENT` | | 기본: `production` |
+| `EC2_TAG_EXPIRY` | | EC2 태그 Expiry |
+| `SSH_KEY_PATH` | | 기본: `~/.ssh/id_ed25519` |
+
+### 페르소나별 시크릿 (`infra/.env.{name}`)
 
 ```
 PERSONA_NAME=lab
@@ -176,9 +196,7 @@ openclaw-infra/
 ├── README.md
 ├── LICENSE
 ├── openclaw/                              # 서브모듈 (소스 참조용, 수정 금지)
-├── docs/
-│   ├── slack-app-setup.md                 # Slack App 생성 가이드
-│   └── security-ops.md                    # 보안 운영 가이드
+├── docs/                                  # 운영 가이드
 ├── .claude/skills/
 │   ├── deploy/                            # 배포 스킬
 │   │   ├── SKILL.md
@@ -196,14 +214,15 @@ openclaw-infra/
 ├── infra/                                 # Pulumi IaC
 │   ├── index.ts
 │   ├── src/
-│   │   ├── config.ts                      # 페르소나 설정 + AWS 상수
+│   │   ├── config.ts                      # 페르소나 설정 + AWS 환경변수 로드
 │   │   ├── templates.ts                   # User Data + Traefik 템플릿
 │   │   ├── ec2.ts                         # EC2 인스턴스
 │   │   ├── dns.ts                         # Route53 레코드
 │   │   └── security.ts                    # Security Group
+│   ├── .env                               # 인프라 공용 설정 (gitignored)
 │   ├── .env.{name}                        # 페르소나별 시크릿 (gitignored)
 │   └── .env.example
-└── tasks/                                 # 작업 추적
+└── tasks/                                 # 작업 추적 (gitignored)
 ```
 
 ## 설계 결정
@@ -217,6 +236,7 @@ openclaw-infra/
 | 고정 Docker 네트워크 | trustedProxies에 Traefik IP (`172.28.0.2`) 지정 |
 | Slack Socket Mode | 인바운드 포트 불필요. 방화벽 친화적 |
 | SOUL.md 페르소나 | OpenClaw 네이티브 메커니즘으로 시스템 프롬프트에 주입 |
+| 환경변수 분리 | `.env`(인프라 공용) + `.env.{name}`(페르소나 시크릿)으로 역할 분리 |
 
 ## 라이선스
 

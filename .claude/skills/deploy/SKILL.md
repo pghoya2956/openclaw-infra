@@ -78,7 +78,6 @@ ANTHROPIC_SETUP_TOKEN — "sk-ant-oat01-" prefix, 최소 80자
 
 ```bash
 cd infra
-export AWS_PROFILE=sandbox
 export ENABLED_PERSONAS=lab,product-leader   # 쉼표 구분
 pulumi preview
 ```
@@ -133,7 +132,7 @@ OpenClaw 배포 완료
 페르소나: {name}
 Instance: {instanceId}
 IP: {publicIp}
-Domain: {subdomain}.sbx.infograb.io
+Domain: {subdomain}.{BASE_DOMAIN}
 
 서비스:
 - Gateway: active (running)

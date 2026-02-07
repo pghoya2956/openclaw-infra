@@ -20,8 +20,8 @@
 |-------|-------|
 | Instance Type | t3.medium (all) |
 | Volume Size | 30 GB (all) |
-| SSH Key | Chad (~/.ssh/id_ed25519) |
-| Domain | {subdomain}.sbx.infograb.io |
+| SSH Key | `${AWS_KEY_NAME}` (`${SSH_KEY_PATH}`) |
+| Domain | `{subdomain}.${BASE_DOMAIN}` |
 | State Dir | /opt/openclaw |
 | Gateway Port | 18789 |
 | Workspace | /home/ec2-user/.openclaw/workspace/ |

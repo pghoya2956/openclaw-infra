@@ -149,13 +149,34 @@ export function loadWorkspaceFiles(personaDir: string): WorkspaceFiles {
   };
 }
 
-// AWS Infrastructure constants
+// Require environment variable or throw descriptive error
+function requireEnv(key: string): string {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(`Missing required env var: ${key}. See .env.example`);
+  }
+  return value;
+}
+
+// AWS Infrastructure (loaded from infra/.env)
 export const awsConfig = {
-  vpcId: "vpc-098d05350c6ddeaa0", // IG-POC-SBX-VPC
-  subnetId: "subnet-0df3efe6e8373fa82", // IG-POC-SBX-SBN1-AZa (public)
-  keyName: "Chad",
-  hostedZoneId: "Z06071792MIKNXBV41TCQ", // sbx.infograb.io
-  baseDomain: "sbx.infograb.io",
+  vpcId: requireEnv("AWS_VPC_ID"),
+  subnetId: requireEnv("AWS_SUBNET_ID"),
+  keyName: requireEnv("AWS_KEY_NAME"),
+  hostedZoneId: requireEnv("AWS_HOSTED_ZONE_ID"),
+  baseDomain: requireEnv("BASE_DOMAIN"),
+};
+
+// Infrastructure settings (tags, ACME, SSH)
+export const infraConfig = {
+  sshKeyPath: process.env.SSH_KEY_PATH || "~/.ssh/id_ed25519",
+  acmeEmail: requireEnv("ACME_EMAIL"),
+  tags: {
+    Owner: requireEnv("EC2_TAG_OWNER"),
+    Purpose: process.env.EC2_TAG_PURPOSE || "OpenClaw AI Assistant",
+    Environment: process.env.EC2_TAG_ENVIRONMENT || "production",
+    Expiry: process.env.EC2_TAG_EXPIRY || "",
+  },
 };
 
 // Load enabled personas based on ENABLED_PERSONAS env var

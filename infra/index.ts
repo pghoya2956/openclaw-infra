@@ -1,5 +1,5 @@
 import * as pulumi from "@pulumi/pulumi";
-import { getPersonas, awsConfig } from "./src/config";
+import { getPersonas, awsConfig, infraConfig } from "./src/config";
 import { createSecurityGroup } from "./src/security";
 import { createInstance } from "./src/ec2";
 import { createDnsRecord } from "./src/dns";
@@ -23,5 +23,5 @@ export const deployedPersonas = results.map((r) => ({
   instanceId: r.instance.id,
   publicIp: r.instance.publicIp,
   domain: `${r.persona.subdomain}.${awsConfig.baseDomain}`,
-  sshCommand: pulumi.interpolate`ssh -i ~/.ssh/id_ed25519 ec2-user@${r.instance.publicIp}`,
+  sshCommand: pulumi.interpolate`ssh -i ${infraConfig.sshKeyPath} ec2-user@${r.instance.publicIp}`,
 }));

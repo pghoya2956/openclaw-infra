@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# OpenClaw submodule (별도 저장소)
+openclaw/
+
+# Dependencies
+node_modules/
+infra/node_modules/
+infra/bin/
+
+# Pulumi state (Pulumi Cloud에서 관리)
+infra/.pulumi/
+
+# Playwright screenshots
+.playwright-mcp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code session data
+.claude/projects/
+.claude/todos/

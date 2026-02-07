@@ -1,76 +1,83 @@
 ---
 name: deploy
-description: OpenClaw EC2 인스턴스를 배포하고 Slack + HTTPS 웹 접근까지 구성한다. "/deploy", "배포해줘", "OpenClaw 띄워줘", "인스턴스 생성해줘" 요청 시 사용한다.
+description: OpenClaw EC2 인스턴스에 expert-team 페르소나를 배포한다. "/deploy", "배포해줘", "OpenClaw 띄워줘", "페르소나 배포", "{역할} 띄워줘", "인스턴스 생성해줘", "deploy status" 요청 시 사용한다. 페르소나별 SOUL.md/IDENTITY.md/AGENTS.md를 관리하고, Pulumi IaC로 AWS EC2에 배포한다.
 ---
 
 # Deploy
 
-OpenClaw EC2 인스턴스를 Pulumi IaC로 배포하고, Slack 연동 + HTTPS Control UI 접근까지 완전히 구성한다.
+OpenClaw EC2 인스턴스에 expert-team 페르소나를 Pulumi IaC로 배포한다.
 
-## 전제 조건
+## Persona Management
 
-이 스킬을 실행하기 전 아래가 준비되어 있어야 한다:
+각 페르소나의 워크스페이스 파일은 `personas/{name}/` 하위에 관리된다:
 
-- AWS CLI 프로필 설정 (`AWS_PROFILE`)
-- Pulumi CLI 설치
-- Node.js 18+
-- Anthropic Max 요금제 (Setup Token 발급)
-- Slack App (Socket Mode 활성화, Bot Token + App Token)
+```
+personas/{name}/
+├── SOUL.md        # 성격, 전문성, 프레임워크 (Core Truths/Boundaries/Vibe/Continuity)
+├── IDENTITY.md    # 표시 이름, 이모지, 바이브 (마크다운 key-value 형식)
+└── AGENTS.md      # 운영 규칙, 도구 사용법
+```
+
+사용 가능한 페르소나와 인프라 매핑은 `references/persona-registry.md` 참조.
+페르소나 원본 전문성은 `/expert-team` 스킬의 `references/{name}.md`에서 유래.
+
+## Argument Parsing
+
+- `/deploy` (인자 없음): 페르소나 목록 표시 후 선택 안내
+- `/deploy {name}`: 특정 페르소나 1개 배포
+- `/deploy {name},{name},...`: 복수 페르소나 동시 배포
+- `/deploy list`: 사용 가능한 페르소나 목록과 현재 배포 상태
+- `/deploy status`: 배포된 인스턴스의 서비스 상태 확인
 
 ## Workflow
 
-### Step A: 환경 점검
-
-사전 요구사항을 자동 확인한다:
+### Step A: Environment Check
 
 ```bash
-# 확인 대상
 aws sts get-caller-identity    # AWS 인증
 pulumi version                  # Pulumi CLI
 node --version                  # Node.js 18+
 ```
 
-실패 시 사용자에게 누락된 항목을 알려주고 설치 가이드를 제공한다.
+`infra/` 디렉토리에 `node_modules`가 없으면 `npm install` 실행.
 
-`infra/` 디렉토리에 `node_modules`가 없으면 `npm install`을 실행한다.
+### Step B: Persona Selection
 
-### Step B: 시크릿 수집
+1. `references/persona-registry.md`에서 사용 가능한 페르소나 확인
+2. 요청된 페르소나의 `personas/{name}/` 디렉토리 존재 확인
+3. SOUL.md 내용이 비어있지 않은지 확인
 
-`.env.lab` 파일이 존재하는지 확인한다. 없거나 불완전하면 사용자에게 하나씩 수집한다.
+### Step C: Secret Collection
 
-**필수 시크릿 (5개):**
+각 페르소나별 `infra/.env.{name}` 파일을 확인한다. 없거나 불완전하면 수집:
 
 | 키 | 설명 | 생성 방법 |
 |-----|------|----------|
-| `PERSONA_NAME` | 페르소나 이름 | 기본값 `lab` 사용 가능 |
+| `PERSONA_NAME` | 페르소나 이름 | 자동 설정 |
 | `OPENCLAW_GATEWAY_TOKEN` | Gateway 인증 토큰 | `openssl rand -hex 32` |
-| `SLACK_BOT_TOKEN` | Slack Bot Token | Slack API 앱 설정에서 복사 (`xoxb-...`) |
-| `SLACK_APP_TOKEN` | Slack App Token | Socket Mode 활성화 후 생성 (`xapp-...`) |
-| `ANTHROPIC_SETUP_TOKEN` | Anthropic Setup Token | 로컬에서 `claude setup-token` 실행 (`sk-ant-oat01-...`) |
+| `SLACK_BOT_TOKEN` | Slack Bot Token | Slack API에서 복사 (`xoxb-...`) |
+| `SLACK_APP_TOKEN` | Slack App Token | Socket Mode 생성 (`xapp-...`) |
+| `ANTHROPIC_SETUP_TOKEN` | Anthropic Setup Token | `claude setup-token` (`sk-ant-oat01-...`) |
 
-**수집 절차:**
-
-- 이미 `.env.lab`에 값이 있으면 건너뛴다
-- `OPENCLAW_GATEWAY_TOKEN`이 없으면 자동 생성을 제안한다
-- `ANTHROPIC_SETUP_TOKEN`이 없으면 `claude setup-token` 실행을 안내한다
-- `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`이 없으면 Slack App 설정 체크리스트를 보여준다
-
-**Slack App 체크리스트** (토큰이 없을 때만 표시):
+**Slack App Checklist** (신규 페르소나용):
 
 ```
-Slack API (https://api.slack.com/apps) 에서:
+Slack API (https://api.slack.com/apps):
+- Create New App -> From scratch
 - Socket Mode: Enable
-- App-Level Token 생성 (connections:write 스코프) → xapp-...
+- App-Level Token (connections:write) -> xapp-...
 - Event Subscriptions: Enable
 - Subscribe to bot events: message.im, message.channels, app_mention
 - Bot Token Scopes: chat:write, im:history, channels:history, app_mentions:read, users:read
-- Install to Workspace → Bot Token xoxb-... 복사
-- App Home → Messages Tab: Enable
+- Install to Workspace -> Bot Token xoxb-...
+- App Home -> Messages Tab: Enable
 ```
 
-### Step C: 시크릿 검증
+**주의**: 각 페르소나는 **별도 Slack App** 필요. Socket Mode에서 동일 App Token의 여러 연결은 이벤트를 라운드 로빈 분배하여 메시지가 유실된다.
 
-수집된 토큰 형식을 검증한다:
+`ANTHROPIC_SETUP_TOKEN`은 모든 페르소나에서 공유 가능 (동일 Max 요금제).
+
+### Step D: Secret Validation
 
 ```
 OPENCLAW_GATEWAY_TOKEN — hex, 최소 32자
@@ -79,85 +86,49 @@ SLACK_APP_TOKEN — "xapp-" prefix
 ANTHROPIC_SETUP_TOKEN — "sk-ant-oat01-" prefix, 최소 80자
 ```
 
-검증 실패 시 어떤 값이 잘못되었는지 명확히 알려준다.
-
-### Step D: 배포
+### Step E: Deploy
 
 ```bash
 cd infra
-export AWS_PROFILE=sandbox    # CLAUDE.md에서 확인
-pulumi preview                # 변경 사항 확인 → 사용자에게 보여줌
+export AWS_PROFILE=sandbox
+export ENABLED_PERSONAS=lab,product-leader   # 쉼표 구분
+pulumi preview
 ```
 
-Preview 결과를 보여주고, **영향 받는 리소스가 이 프로젝트의 openclaw 리소스만인지** 반드시 확인한다. 다른 리소스가 포함되어 있으면 즉시 중단하고 사용자에게 알린다.
-
-사용자 승인 후:
+Preview 결과에서 **openclaw 리소스만 영향받는지** 확인 후 사용자 승인:
 
 ```bash
 pulumi up --yes
 ```
 
-### Step E: User Data 완료 대기
+### Step F: Wait for User Data
 
-배포 후 SSH로 접속하여 User Data 스크립트 완료를 확인한다:
+각 EC2에 SSH 접속하여 완료 확인:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ec2-user@<publicIp>
 sudo tail -f /var/log/user-data.log
+# "=== User Data completed ===" 확인 (최대 5분)
 ```
 
-`=== User Data completed ===` 메시지를 확인한다. 최대 5분 대기.
+### Step G: Service Verification
 
-실패 시 로그에서 에러를 찾아 사용자에게 보고한다.
-
-### Step F: 서비스 검증
-
-SSH로 아래를 순차 확인한다:
+각 인스턴스에서:
 
 ```bash
 export OPENCLAW_STATE_DIR=/opt/openclaw
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 
-# Gateway 프로세스
-systemctl --user status openclaw-gateway
-
-# Anthropic 인증
-openclaw models status
-
-# Slack 연결
-openclaw channels status --probe
+systemctl --user status openclaw-gateway       # active (running)
+openclaw models status                          # anthropic: token
+openclaw channels status --probe                # Slack: works
+curl -sk -o /dev/null -w "%{http_code}" https://<domain>/   # HTTP 200
+cat ~/.openclaw/workspace/SOUL.md               # 페르소나 내용 존재
 ```
 
-**성공 기준:**
-- Gateway: `active (running)`
-- Anthropic: `token` 인증 활성
-- Slack: `enabled, configured, running, works`
+### Step H: Device Pairing
 
-하나라도 실패하면 로그를 확인하고 문제를 진단한다.
-
-### Step G: HTTPS 접속 확인
-
-```bash
-curl -sk -o /dev/null -w "%{http_code}" https://<domain>/
-```
-
-HTTP 200이 아니면:
-- Traefik 컨테이너 상태 확인 (`sudo docker compose -f /opt/openclaw/docker-compose.yml ps`)
-- Traefik 로그 확인 (`sudo docker compose -f /opt/openclaw/docker-compose.yml logs`)
-- Let's Encrypt 인증서 발급 대기 (최대 1분)
-
-### Step H: Device Pairing 안내
-
-HTTPS 접속이 가능하면 사용자에게 Control UI 접속을 안내한다:
-
-```
-브라우저에서 https://<domain> 접속:
-- Gateway Token 필드에 OPENCLAW_GATEWAY_TOKEN 값 입력
-- Connect 클릭
-- "pairing required" 메시지가 표시됨 (정상)
-```
-
-사용자가 접속 시도하면 서버에서 pairing을 승인한다:
+HTTPS 접속 시 "pairing required" 표시되면:
 
 ```bash
 ssh ec2-user@<IP>
@@ -166,47 +137,45 @@ openclaw devices list          # Pending 요청 확인
 openclaw devices approve <requestId>
 ```
 
-승인 후 브라우저 새로고침 → 연결 완료.
-
-### Step I: 결과 보고
-
-모든 검증이 완료되면 결과를 보고한다:
+### Step I: Result Report
 
 ```
 OpenClaw 배포 완료
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
+페르소나: {name}
+Instance: {instanceId}
+IP: {publicIp}
+Domain: {subdomain}.sbx.infograb.io
 
-Instance: <instanceId>
-IP: <publicIp>
-Domain: <domain>
-OpenClaw: <version>
-
-서비스 상태:
+서비스:
 - Gateway: active (running)
-- Anthropic: token 인증 활성
+- Anthropic: token
 - Slack: works
-- HTTPS: HTTP 200
+- HTTPS: 200
 
-접속 방법:
-- SSH: ssh -i ~/.ssh/id_ed25519 ec2-user@<IP>
-- Web: https://<domain>
-- Slack: 봇에게 DM 또는 @멘션
+접속:
+- SSH: ssh -i ~/.ssh/id_ed25519 ec2-user@{IP}
+- Web: https://{domain}
+- Slack: @{봇이름}으로 DM 또는 멘션
 ```
 
-## 에러 복구
+## Error Recovery
 
 | 에러 | 진단 | 해결 |
 |------|------|------|
 | npm install 실패 | git 미설치 | `sudo dnf install -y git` |
-| docker compose 실패 | compose 플러그인 미설치 | compose 바이너리 수동 설치 |
-| onboard 실패 | 토큰 형식 오류 | `.env.lab` 토큰 값 재확인 |
-| Slack 미연결 | 토큰 누락/오류 | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` 재확인 |
+| docker compose 실패 | compose 미설치 | compose 바이너리 수동 설치 |
+| onboard 실패 | 토큰 오류 | `.env.{name}` 토큰 재확인 |
+| Slack 미연결 | 토큰 누락 | Slack App 체크리스트 재확인 |
 | HTTPS 미응답 | Traefik 미시작 | `sudo docker compose up -d` |
 | pairing required | 기기 미승인 | `openclaw devices approve` |
+| SOUL.md 미적용 | 파일 경로 오류 | `~/.openclaw/workspace/SOUL.md` 확인 |
 
-## 주의사항
+## Important Notes
 
-- **다른 EC2 인스턴스를 절대 건드리지 않는다** — Pulumi는 자체 스택 리소스만 관리
-- `.env.lab` 파일은 시크릿 포함 — Git 커밋 금지 (`.gitignore`에 이미 포함)
-- Setup Token 만료 시: 로컬에서 `claude setup-token` 재실행 → `.env.lab` 업데이트 → `pulumi up`
-- 비용 절감: 미사용 시 `aws ec2 stop-instances --instance-ids <id>`
+- 다른 EC2 인스턴스를 절대 건드리지 않는다
+- `.env.*` 파일은 시크릿 — Git 커밋 금지
+- Setup Token 만료 시: `claude setup-token` 재실행 → `.env.*` 업데이트 → `pulumi up`
+- 비용 절감: 미사용 시 `aws ec2 stop-instances`
+- SOUL.md는 20,000자 이내 (시스템 프롬프트 주입 시 truncation)
+- 워크스페이스 파일은 onboard **이전에** 배포 (`writeFileIfMissing()` 활용)

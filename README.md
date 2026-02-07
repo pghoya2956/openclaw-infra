@@ -1,286 +1,223 @@
-# OpenClaw AWS 배포
+# openclaw-infra
 
-Pulumi IaC로 AWS EC2에 OpenClaw 인스턴스를 배포하고, Slack 연동 + HTTPS 웹 접근을 구성한다.
+Pulumi IaC로 AWS EC2에 OpenClaw 인스턴스를 배포한다. 페르소나별 독립 EC2 인스턴스에 Slack 연동, HTTPS, 전문가 페르소나를 자동 구성한다.
 
 ## 아키텍처
 
 ```
-Internet
-  |
-  +-- Slack API (Socket Mode, outbound only)
-  |     <-> WebSocket (인바운드 포트 불필요)
-  |
-  v
-+-------------------------------------------------------+
-|  EC2 (t3.medium, Amazon Linux 2023)                    |
-|                                                        |
-|  systemd user service: openclaw-gateway                |
-|  openclaw gateway --bind lan --port 18789              |
-|                                                        |
-|  State: /opt/openclaw/                                 |
-|  +-- openclaw.json (gateway/auth 설정)                 |
-|  +-- agents/main/agent/auth-profiles.json (인증)       |
-|  +-- .env (환경변수)                                    |
-|                  | :18789                               |
-|  Docker: Traefik v3 (HTTPS)                            |
-|  :443 -> host:18789 (Let's Encrypt auto-TLS)           |
-|                                                        |
-+-------------------------------------------------------+
-        |
-        v
-  Route53: <subdomain>.sbx.infograb.io -> EC2 Public IP
+                    Slack API (Socket Mode)
+                    ┌──────────────┐
+                    │  Workspace   │
+       ┌────────────┤              ├──────────────┐
+       │            └──────┬───────┘               │
+       │                   │                       │
+  [Slack App A]      [Slack App B]           [Slack App N]
+       │                   │                       │
+       v                   v                       v
+  EC2: lab            EC2: product           EC2: growth
+  SOUL.md             SOUL.md                SOUL.md
+  (범용 어시스턴트)    (제품 전략)             (성장 전략)
+       │                   │                       │
+       v                   v                       v
+  Traefik (HTTPS)    Traefik (HTTPS)         Traefik (HTTPS)
+       │                   │                       │
+  lab.openclaw.      product.openclaw.       growth.openclaw.
+  sbx.infograb.io    sbx.infograb.io         sbx.infograb.io
 ```
+
+각 EC2 내부:
+
+```
+EC2 (t3.medium, Amazon Linux 2023)
+├── OpenClaw Gateway (systemd user service, :18789)
+│   ├── SOUL.md       — 페르소나 정체성/전문성
+│   ├── IDENTITY.md   — 봇 표시 이름/이모지
+│   └── AGENTS.md     — 운영 규칙
+├── Traefik (Docker, :443 → :18789, Let's Encrypt)
+└── State: /opt/openclaw/
+```
+
+## 페르소나
+
+| 이름 | 도메인 | 역할 |
+|------|--------|------|
+| lab | lab.openclaw.sbx.infograb.io | 범용 AI 어시스턴트 |
+| product-leader | product.openclaw.sbx.infograb.io | 제품 전략, 우선순위, 로드맵 |
+| engineering-lead | eng.openclaw.sbx.infograb.io | 아키텍처, 기술 의사결정 |
+| growth-expert | growth.openclaw.sbx.infograb.io | 퍼널 분석, 성장 전략 |
+| ceo-advisor | ceo.openclaw | CEO 관점 의사결정 |
+| strategy-consultant | strategy.openclaw | 전략 분석 |
+| design-director | design.openclaw | UX/UI 디자인 |
+| data-scientist | data.openclaw | 데이터 분석, 실험 설계 |
+| marketing-director | marketing.openclaw | 마케팅 전략 |
+
+상위 4개가 현재 배포 대상. 나머지 5개는 워크스페이스 파일만 준비됨.
 
 ## 사전 요구사항
 
-- AWS 계정 + CLI 프로필 (`AWS_PROFILE` 설정)
-- Pulumi CLI (`pulumi` 명령)
+- AWS CLI + 프로필 (`AWS_PROFILE`)
+- Pulumi CLI
 - Node.js 18+
-- Anthropic **Max 요금제** (Setup Token 발급용)
-- Slack App (Socket Mode 활성화)
+- Anthropic Max 요금제 (Setup Token 발급용)
+- 페르소나별 Slack App (Socket Mode)
 
-## 시크릿 준비
-
-### Anthropic Setup Token
-
-로컬에서 Claude Code CLI로 Setup Token을 생성한다:
+## 빠른 시작
 
 ```bash
-claude setup-token
-```
+# 서브모듈 포함 clone
+git clone --recurse-submodules https://github.com/pghoya2956/openclaw-infra.git
+cd openclaw-infra/infra
+npm install
 
-출력된 `sk-ant-oat01-...` 토큰을 복사한다. 이 토큰은 Max 요금제 계정에 연결되며, API Key와 달리 별도 과금이 없다.
-
-### Slack App 토큰
-
-Slack API (https://api.slack.com/apps) 에서 앱을 생성하고 아래 설정을 완료한다:
-
-**필수 설정:**
-- Socket Mode: Enable
-- App-Level Token 생성 (`connections:write` 스코프) → `xapp-...`
-- Event Subscriptions: Enable
-- Subscribe to bot events: `message.im`, `message.channels`, `app_mention`
-- Bot Token Scopes: `chat:write`, `im:history`, `channels:history`, `app_mentions:read`, `users:read`
-- Install to Workspace → Bot Token `xoxb-...` 복사
-- App Home → Messages Tab: Enable
-
-### Gateway Token
-
-랜덤 토큰을 생성한다:
-
-```bash
-openssl rand -hex 32
-```
-
-## 설정
-
-### .env.lab 파일 생성
-
-```bash
-cd infra
+# 페르소나별 시크릿 파일 생성
 cp .env.example .env.lab
+# .env.lab 편집 (토큰 채우기)
+
+# 배포
+export AWS_PROFILE=sandbox
+export ENABLED_PERSONAS=lab
+pulumi preview
+pulumi up
 ```
 
-`.env.lab`을 편집하여 시크릿을 채운다:
+## 시크릿 설정
+
+각 페르소나별 `infra/.env.{name}` 파일이 필요하다:
 
 ```
 PERSONA_NAME=lab
-OPENCLAW_GATEWAY_TOKEN=<openssl rand -hex 32 결과>
+OPENCLAW_GATEWAY_TOKEN=<openssl rand -hex 32>
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 ANTHROPIC_SETUP_TOKEN=sk-ant-oat01-...
 ```
 
-### AWS 인프라 상수
+- **ANTHROPIC_SETUP_TOKEN**: `claude setup-token`으로 생성. 모든 페르소나에서 공유 가능
+- **Slack 토큰**: 페르소나마다 별도 Slack App 필요 (Socket Mode 라운드 로빈 문제)
+- **GATEWAY_TOKEN**: `openssl rand -hex 32`로 생성
 
-`infra/src/config.ts`의 `awsConfig` 객체에서 VPC, Subnet, Key Pair 등을 환경에 맞게 수정한다.
+## 멀티 페르소나 배포
 
-## 배포
+`ENABLED_PERSONAS` 환경변수로 배포 대상을 선택한다:
 
 ```bash
-cd infra
-npm install
-export AWS_PROFILE=sandbox    # 본인의 AWS 프로필
+# 단일
+export ENABLED_PERSONAS=lab
 
-pulumi preview   # 변경 사항 확인
-pulumi up        # 배포 실행
+# 복수
+export ENABLED_PERSONAS=lab,product-leader,engineering-lead,growth-expert
+
+# 배포
+pulumi up
 ```
 
-배포 완료 후 출력:
+각 페르소나는 독립 EC2 인스턴스로 생성되며, 공유 Security Group을 사용한다.
 
-```
-Outputs:
-    domain     : "lab.openclaw.sbx.infograb.io"
-    gatewayUrl : "https://lab.openclaw.sbx.infograb.io"
-    publicIp   : "x.x.x.x"
-    sshCommand : "ssh -i ~/.ssh/id_ed25519 ec2-user@x.x.x.x"
-```
+## Claude Code 스킬
+
+프로젝트에 3개 운영 스킬이 포함되어 있다:
+
+### /deploy
+
+페르소나를 EC2에 배포한다. 환경 확인 → 시크릿 검증 → `pulumi up` → 서비스 검증까지 한 번에 진행.
+
+### /slack-app-setup
+
+새 페르소나용 Slack App을 만든다. Manifest 생성 → 토큰 수집 → `.env` 파일 완성까지 단계별 안내.
+
+### /security-audit
+
+배포된 인스턴스의 보안 상태를 점검한다. CVE 패치, Gateway 인증, 채널 정책, 로깅 마스킹 등 자동 검사.
 
 ## 배포 후 확인
 
-### SSH 접속
-
 ```bash
+# SSH 접속
 ssh -i ~/.ssh/id_ed25519 ec2-user@<publicIp>
-```
 
-### User Data 로그 확인
-
-```bash
+# User Data 완료 확인
 sudo tail -f /var/log/user-data.log
-```
+# "=== User Data completed ===" 메시지 확인 (약 2~3분)
 
-`=== User Data completed ===` 메시지가 나올 때까지 대기한다 (약 2~3분).
-
-### 서비스 상태 확인
-
-```bash
+# 서비스 상태
 export OPENCLAW_STATE_DIR=/opt/openclaw
-
-# Gateway 프로세스
-systemctl --user status openclaw-gateway
-
-# Anthropic 인증
-openclaw models status
-
-# Slack 연결
-openclaw channels status --probe
-```
-
-정상 출력 예시:
-
-```
-# systemctl --user status openclaw-gateway
-● openclaw-gateway.service - OpenClaw Gateway
-     Active: active (running)
-
-# openclaw models status
-Auth store    : /opt/openclaw/agents/main/agent/auth-profiles.json
-Providers w/ OAuth/tokens (1): anthropic (1)
-- anthropic:default=token:sk-ant-o...
-
-# openclaw channels status --probe
-- Slack default: enabled, configured, running, works
-```
-
-### HTTPS 접속
-
-브라우저에서 `https://<domain>` 접속 → Control UI 확인.
-
-Let's Encrypt 인증서 발급에 수십 초 소요될 수 있다. 첫 접속 시 잠시 대기.
-
-### Slack 테스트
-
-- 봇에게 DM 전송 → AI 응답 수신
-- 채널에서 `@봇이름 안녕` 멘션 → AI 응답 수신
-
-## EC2에서 실행되는 것
-
-User Data 스크립트가 다음을 자동으로 수행한다:
-
-```
-Node.js 22 + Docker + Git 설치
-  → Docker Compose V2 플러그인 설치
-  → npm install -g openclaw@latest
-  → loginctl enable-linger ec2-user
-  → /opt/openclaw 디렉토리 생성 + .env 파일 작성
-  → openclaw onboard (비대화형)
-      --auth-choice token (Setup Token으로 Anthropic 인증)
-      --gateway-bind lan --gateway-port 18789
-      --install-daemon (systemd user 서비스 설치)
-  → trustedProxies 설정 (Traefik Docker IP)
-  → systemd 서비스에 Slack 환경변수 주입
-  → Gateway 재시작
-  → Traefik 컨테이너 시작 (HTTPS 프록시)
+systemctl --user status openclaw-gateway    # active (running)
+openclaw models status                       # anthropic: token
+openclaw channels status --probe             # Slack: works
 ```
 
 ## 운영
 
-### 서비스 재시작
-
 ```bash
+# 서비스 재시작
 systemctl --user restart openclaw-gateway
-```
 
-### 로그 확인
-
-```bash
+# 로그
 journalctl --user -u openclaw-gateway -f
-```
 
-### OpenClaw 업데이트
-
-```bash
+# OpenClaw 업데이트
 sudo npm install -g openclaw@latest
 systemctl --user restart openclaw-gateway
-```
 
-### Setup Token 갱신
+# EC2 중지/시작 (비용 절감)
+aws ec2 stop-instances --instance-ids <id>
+aws ec2 start-instances --instance-ids <id>
+# 재시작 후 IP 변경되므로 pulumi up으로 DNS 업데이트
 
-토큰 만료 시 두 가지 방법:
-
-**방법 A — Pulumi 재배포:**
-로컬에서 `claude setup-token` → `.env.lab` 업데이트 → `pulumi up`
-
-**방법 B — SSH 수동 갱신:**
-```bash
-ssh -i ~/.ssh/id_ed25519 ec2-user@<IP>
-export OPENCLAW_STATE_DIR=/opt/openclaw
-openclaw models auth setup-token --provider anthropic
-# → 로컬에서 claude setup-token 실행 후 토큰 붙여넣기
-```
-
-### 인스턴스 중지/시작
-
-비용 절감을 위해 미사용 시 중지:
-
-```bash
-# AWS CLI로 중지
-aws ec2 stop-instances --instance-ids <instanceId>
-
-# 재시작
-aws ec2 start-instances --instance-ids <instanceId>
-```
-
-재시작 후 Public IP가 변경되므로, `pulumi up`으로 DNS를 업데이트하거나 Elastic IP를 할당한다.
-
-### 인프라 삭제
-
-```bash
-cd infra
-pulumi destroy
+# 인프라 삭제
+cd infra && pulumi destroy
 ```
 
 ## 디렉토리 구조
 
 ```
-OpenClaw/
-├── CLAUDE.md              # 프로젝트 컨텍스트
-├── README.md              # 이 문서
-├── .env                   # 프로젝트 수준 시크릿
+openclaw-infra/
+├── CLAUDE.md                              # 프로젝트 컨텍스트
+├── README.md
+├── LICENSE
+├── openclaw/                              # 서브모듈 (소스 참조용, 수정 금지)
 ├── docs/
-│   └── troubleshooting.md
-├── tasks/                 # 작업 추적
-├── openclaw/              # 서브모듈 (수정 금지)
-└── infra/                 # Pulumi IaC
-    ├── index.ts           # 엔트리포인트
-    ├── src/
-    │   ├── config.ts      # 페르소나 설정 + AWS 상수
-    │   ├── templates.ts   # User Data + Traefik 템플릿
-    │   ├── ec2.ts         # EC2 인스턴스
-    │   ├── dns.ts         # Route53 레코드
-    │   └── security.ts    # Security Group
-    ├── .env.lab           # lab 페르소나 시크릿
-    └── .env.example       # 시크릿 템플릿
+│   ├── slack-app-setup.md                 # Slack App 생성 가이드
+│   └── security-ops.md                    # 보안 운영 가이드
+├── .claude/skills/
+│   ├── deploy/                            # 배포 스킬
+│   │   ├── SKILL.md
+│   │   ├── references/persona-registry.md
+│   │   └── personas/{name}/               # 9개 페르소나 워크스페이스 파일
+│   │       ├── SOUL.md
+│   │       ├── IDENTITY.md
+│   │       └── AGENTS.md
+│   ├── slack-app-setup/                   # Slack App 설정 스킬
+│   │   ├── SKILL.md
+│   │   └── assets/manifest.json
+│   └── security-audit/                    # 보안 감사 스킬
+│       ├── SKILL.md
+│       └── scripts/collect.sh
+├── infra/                                 # Pulumi IaC
+│   ├── index.ts
+│   ├── src/
+│   │   ├── config.ts                      # 페르소나 설정 + AWS 상수
+│   │   ├── templates.ts                   # User Data + Traefik 템플릿
+│   │   ├── ec2.ts                         # EC2 인스턴스
+│   │   ├── dns.ts                         # Route53 레코드
+│   │   └── security.ts                    # Security Group
+│   ├── .env.{name}                        # 페르소나별 시크릿 (gitignored)
+│   └── .env.example
+└── tasks/                                 # 작업 추적
 ```
 
-## 핵심 설계 결정
+## 설계 결정
 
 | 결정 | 이유 |
 |------|------|
 | Setup Token (Max 요금제) | API Key는 사용량 과금. Setup Token은 Max 구독에 포함 |
 | npm 전역 설치 | 공식 Docker 이미지 없음. npm이 공식 설치 경로 |
-| systemd user 서비스 | `openclaw onboard --install-daemon`이 자동 생성 |
-| Traefik File provider | OpenClaw는 호스트에서 실행 (Docker 아님). File provider로 호스트 포트에 프록시 |
-| 고정 Docker 네트워크 | trustedProxies에 Traefik IP를 지정하기 위해 `172.28.0.0/24` 고정 |
+| EC2 1:1 페르소나 | 인스턴스 격리로 장애 전파 방지. 필요 시 개별 중지 가능 |
+| Traefik File provider | OpenClaw는 호스트에서 실행. File provider로 호스트 포트에 프록시 |
+| 고정 Docker 네트워크 | trustedProxies에 Traefik IP (`172.28.0.2`) 지정 |
 | Slack Socket Mode | 인바운드 포트 불필요. 방화벽 친화적 |
+| SOUL.md 페르소나 | OpenClaw 네이티브 메커니즘으로 시스템 프롬프트에 주입 |
+
+## 라이선스
+
+[MIT](LICENSE)

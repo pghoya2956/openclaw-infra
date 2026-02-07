@@ -30,12 +30,15 @@ tags: {
 ## 디렉토리 구조
 
 ```
-OpenClaw/
+openclaw-infra/
 ├── CLAUDE.md
-├── docs/
-│   └── troubleshooting.md   # 문제점 및 해결방안
-├── openclaw/                # 서브모듈 (수정 금지)
-└── infra/                   # Pulumi IaC (구현 예정)
+├── openclaw/                  # 서브모듈 (수정 금지)
+├── docs/                      # 운영 가이드
+├── .claude/skills/            # Claude Code 스킬 (deploy, slack-app-setup, security-audit)
+│   └── deploy/personas/       # 페르소나 워크스페이스 파일 (SOUL.md/IDENTITY.md/AGENTS.md)
+├── infra/                     # Pulumi IaC
+│   └── .env.{name}           # 페르소나별 시크릿 (gitignored)
+└── tasks/                     # 작업 추적
 ```
 
 ## 명령어
@@ -74,7 +77,7 @@ npm install -g openclaw@latest
     "mode": "local",
     "bind": "lan",
     "port": 18789,
-    "trustedProxies": ["172.19.0.2"]
+    "trustedProxies": ["172.28.0.2"]
   }
 }
 ```

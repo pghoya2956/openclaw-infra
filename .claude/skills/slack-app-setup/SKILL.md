@@ -31,17 +31,17 @@ ls infra/.env.{persona-name} 2>/dev/null
 
 ### Step B: Manifest 준비 + 클립보드 복사
 
-`assets/manifest.json`을 jq로 페르소나 값을 주입한 뒤 pbcopy로 클립보드에 복사한다:
+`persona-registry.md`에서 대상 페르소나의 `identity.name`과 `identity.creature` 값을 읽는다. 이 값을 jq `--arg`로 주입하여 `assets/manifest.json`을 가공한 뒤 pbcopy로 클립보드에 복사한다:
 
 ```bash
-jq '
-  .display_information.name = "{identity.name}" |
-  .display_information.description = "OpenClaw {identity.creature}" |
-  .features.bot_user.display_name = "{identity.name}"
-' assets/manifest.json | pbcopy
+jq --arg name "Product Leader" --arg role "AI Product Advisor" '
+  .display_information.name = $name |
+  .display_information.description = ("OpenClaw " + $role) |
+  .features.bot_user.display_name = $name
+' .claude/skills/slack-app-setup/assets/manifest.json | pbcopy
 ```
 
-표시 이름과 역할은 `persona-registry.md`의 `identity.name`과 `identity.creature` 컬럼에서 가져온다.
+`$name`과 `$role` 값은 페르소나에 맞게 대체한다.
 
 클립보드 복사 완료를 알리고, 바로 Step C 안내로 넘어간다.
 
@@ -62,8 +62,6 @@ jq '
 안내 후 사용자가 대화로 두 토큰을 전달할 때까지 대기한다 (AskUserQuestion 사용하지 않음). 토큰 형식 검증:
 - Bot Token: `xoxb-` 접두사
 - App Token: `xapp-` 접두사
-
-사용자가 1Password 저장을 요청하면 `/1password` 스킬로 처리한다.
 
 ### Step D: .env 파일 생성
 

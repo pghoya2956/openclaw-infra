@@ -19,7 +19,7 @@ personas/{name}/
 ```
 
 사용 가능한 페르소나와 인프라 매핑은 `references/persona-registry.md` 참조.
-페르소나 원본 전문성은 `/expert-team` 스킬의 `references/{name}.md`에서 유래.
+각 페르소나의 전문성은 expert-team 역할 정의를 기반으로 작성됨.
 
 ## Argument Parsing
 
@@ -49,7 +49,9 @@ node --version                  # Node.js 18+
 
 ### Step C: Secret Collection
 
-각 페르소나별 `infra/.env.{name}` 파일을 확인한다. 없거나 불완전하면 수집:
+각 페르소나별 `infra/.env.{name}` 파일을 확인한다. 없거나 불완전하면 `/slack-app-setup {name}` 스킬로 Slack App 생성 + .env 파일 완성을 안내한다.
+
+필수 키:
 
 | 키 | 설명 | 생성 방법 |
 |-----|------|----------|
@@ -59,21 +61,7 @@ node --version                  # Node.js 18+
 | `SLACK_APP_TOKEN` | Slack App Token | Socket Mode 생성 (`xapp-...`) |
 | `ANTHROPIC_SETUP_TOKEN` | Anthropic Setup Token | `claude setup-token` (`sk-ant-oat01-...`) |
 
-**Slack App Checklist** (신규 페르소나용):
-
-```
-Slack API (https://api.slack.com/apps):
-- Create New App -> From scratch
-- Socket Mode: Enable
-- App-Level Token (connections:write) -> xapp-...
-- Event Subscriptions: Enable
-- Subscribe to bot events: message.im, message.channels, app_mention
-- Bot Token Scopes: chat:write, im:history, channels:history, app_mentions:read, users:read
-- Install to Workspace -> Bot Token xoxb-...
-- App Home -> Messages Tab: Enable
-```
-
-**주의**: 각 페르소나는 **별도 Slack App** 필요. Socket Mode에서 동일 App Token의 여러 연결은 이벤트를 라운드 로빈 분배하여 메시지가 유실된다.
+**주의**: 각 페르소나는 **별도 Slack App** 필요. Socket Mode에서 동일 App Token의 여러 연결은 이벤트를 라운드 로빈 분배하여 메시지가 유실된다. Slack App 생성 절차와 manifest는 `/slack-app-setup` 스킬에서 관리한다.
 
 `ANTHROPIC_SETUP_TOKEN`은 모든 페르소나에서 공유 가능 (동일 Max 요금제).
 

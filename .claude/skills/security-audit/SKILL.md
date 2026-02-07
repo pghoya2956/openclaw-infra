@@ -71,8 +71,15 @@ trustedProxies와 `TRAEFIK_IP` 섹션 출력값이 일치하는지 반드시 교
 
 | 키 | 기대값 | 위반 시 |
 |----|-------|--------|
-| `channels.defaults.groupPolicy` | `"allowlist"` | `"open"`이면 **주의** — 인젝션 공격면 증가 |
-| `channels.slack.groupPolicy` | `"allowlist"` | 위와 동일 |
+| `channels.defaults.groupPolicy` | `"allowlist"` 또는 `"open"` | 판정은 아래 기준 참고 |
+| `channels.slack.groupPolicy` | 위와 동일 | 위와 동일 |
+
+groupPolicy 판정 기준:
+- `"allowlist"` + 등록된 채널 있음 → **양호** (가장 안전)
+- `"open"` → **주의** — 모든 채널에서 메시지 수신. 인젝션 공격면 증가
+- `"allowlist"` + 등록된 채널 없음 → **위험** — 모든 메시지가 무시됨 (사실상 비활성)
+
+참고: `allowlist`는 채널이 등록되어야 동작한다. 채널 미등록 상태에서 allowlist를 사용하면 봇이 어떤 메시지에도 응답하지 않는다.
 
 ### 환경변수
 
@@ -130,11 +137,37 @@ Gateway: 인증 token, trustedProxies 일치/불일치
 
 | 문제 | 수정 |
 |------|------|
-| groupPolicy open | `openclaw config set channels.defaults.groupPolicy allowlist` |
+| groupPolicy open → allowlist 전환 | 아래 채널 등록 워크플로우 참조 |
 | Bonjour 활성 | `.env`에 `OPENCLAW_DISABLE_BONJOUR=1` 추가 |
 | trustedProxies 불일치 | `openclaw.json`에서 `gateway.trustedProxies` 배열 업데이트 |
 | 버전 미패치 | `sudo npm update -g openclaw@latest` |
 | logging 미설정 | `openclaw config set logging.redactSensitive tools` + `openclaw config set logging.redactPatterns --json '["xoxb-","xapp-","sk-ant-"]'` |
+
+### 채널 등록 워크플로우 (groupPolicy 전환)
+
+`open` → `allowlist` 전환 시, 허용할 채널을 먼저 등록해야 한다. 채널 미등록 상태에서 allowlist로 전환하면 모든 메시지가 무시된다.
+
+사용자에게 허용 범위를 확인한다:
+- **특정 채널만**: 사용자가 채널명을 지정
+- **전체 허용**: `open` 유지 (현재 상태)
+
+특정 채널 등록 시:
+
+```bash
+# 채널 등록 (채널 ID 또는 이름)
+openclaw config set channels.slack.allowedChannels --json '["#general","#ai-team"]'
+
+# groupPolicy 전환
+openclaw config set channels.defaults.groupPolicy allowlist
+openclaw config set channels.slack.groupPolicy allowlist
+
+# Gateway 재시작
+XDG_RUNTIME_DIR=/run/user/$(id -u) \
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus \
+systemctl --user restart openclaw-gateway
+```
+
+전환 후 반드시 등록된 채널에서 메시지 테스트를 수행한다.
 
 수정 후 Gateway 재시작:
 

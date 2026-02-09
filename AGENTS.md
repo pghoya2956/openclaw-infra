@@ -4,10 +4,24 @@ OpenClaw 통합형 멀티에이전트 프로젝트. 단일 EC2에서 9개 AI 에
 
 ## 아키텍처
 
-- **통합형**: 1 EC2 (t3.medium) + 9 OpenClaw 에이전트 (단일 프로세스)
-- **CEO 오케스트레이션**: CEO Advisor → delegate 스킬 → 전문가 에이전트 (내부 API)
+- **통합형**: 1 EC2 (t3.medium) + 9 OpenClaw 에이전트 (단일 게이트웨이 프로세스)
+- **피어 에이전트**: 9개 에이전트는 서브 에이전트가 아닌 동등한 피어. 각각 독립적으로 Slack에서 호출 가능
+- **CEO 오케스트레이션**: delegate 스킬이 내부 API(`localhost:18789/v1/chat/completions`)를 curl로 호출. 부모-자식이 아닌 API 호출
 - **HTTPS**: Traefik + Let's Encrypt 와일드카드 (`*.openclaw.sbx.infograb.io`) DNS Challenge
 - **Slack**: 에이전트당 별도 Slack App (Socket Mode), 9개 독립 계정
+
+### 세션/컨텍스트 관리
+
+- 컨텍스트는 **Slack 스레드 단위**로 유지. 세션 키: `agent:{id}:slack:channel:{ch}:thread:{ts}`
+- 세션 파일: `/opt/openclaw/agents/{agentId}/sessions/{uuid}.jsonl`
+- 같은 스레드 내 대화는 히스토리 누적, 새 스레드는 새 세션
+- delegate 호출: **stateless** — CEO가 `messages[]`에 질문을 담아 전송, 전문가는 매번 새 요청으로 처리
+
+### 스킬 구조
+
+- **번들 스킬**: OpenClaw 패키지 내장 (의존성 충족 시 자동 컨텍스트 로드)
+- **워크스페이스 스킬**: `personas/{name}/workspace/skills/{skill}/SKILL.md` → 해당 에이전트만 사용
+- 의존성 체크: `metadata.openclaw.requires` (bins, env, config)로 활성화 여부 결정
 
 ## AWS 인프라
 

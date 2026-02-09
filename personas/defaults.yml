@@ -28,9 +28,14 @@ openclaw:
         chatCompletions:
           enabled: true        # delegate 스킬이 내부 API로 에이전트 호출
 
+  messages:
+    ackReactionScope: group-mentions
+    removeAckAfterReply: true
+
   tools:
     exec:
-      ask: always
+      security: full
+      ask: off
 
   logging:
     redactSensitive: tools

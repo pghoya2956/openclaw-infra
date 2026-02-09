@@ -23,6 +23,10 @@ openclaw:
     port: 18789
     trustedProxies:
       - "172.28.0.2"           # Traefik Docker IP
+    http:
+      endpoints:
+        chatCompletions:
+          enabled: true        # delegate 스킬이 내부 API로 에이전트 호출
 
   tools:
     exec:

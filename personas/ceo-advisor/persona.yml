@@ -1,0 +1,9 @@
+# CEO Advisor — 경영 고문
+# defaults.yml의 설정을 상속받으며, 여기서 지정한 값이 우선됨
+
+subdomain: ceo.openclaw
+
+openclaw:
+  channels:
+    slack:
+      replyToMode: all

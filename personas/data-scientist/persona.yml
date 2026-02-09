@@ -1,0 +1,9 @@
+# Data Scientist — 데이터 사이언티스트
+# defaults.yml의 설정을 상속받으며, 여기서 지정한 값이 우선됨
+
+subdomain: data.openclaw
+
+openclaw:
+  channels:
+    slack:
+      replyToMode: all

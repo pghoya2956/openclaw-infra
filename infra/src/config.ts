@@ -1,155 +1,21 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as dotenv from "dotenv";
+import * as yaml from "js-yaml";
+import {
+  PersonaYaml,
+  PersonaConfig,
+  WorkspaceFile,
+  validatePersonaYaml,
+  validateSecrets,
+  checkWorkspaceSize,
+} from "./schema";
 
 // Load shared .env
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
-// Persona configuration
-export interface PersonaConfig {
-  name: string;
-  subdomain: string;
-  instanceType: string;
-  volumeSize: number;
-  channels: string[];
-  env: Record<string, string>;
-  personaDir: string;
-  identity: {
-    name: string;
-    emoji: string;
-  };
-}
+// --- Utility ---
 
-// Workspace files loaded from persona directory
-export interface WorkspaceFiles {
-  soul: string;
-  identity: string;
-  agents: string;
-}
-
-// Persona definitions (metadata only, secrets loaded from .env.{name})
-type PersonaDefinition = Omit<PersonaConfig, "env">;
-
-const PERSONA_DEFINITIONS: Record<string, PersonaDefinition> = {
-  lab: {
-    name: "lab",
-    subdomain: "lab.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/lab",
-    identity: { name: "Lab", emoji: "beaker" },
-  },
-  "product-leader": {
-    name: "product-leader",
-    subdomain: "product.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/product-leader",
-    identity: { name: "Product Leader", emoji: "compass" },
-  },
-  "engineering-lead": {
-    name: "engineering-lead",
-    subdomain: "eng.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/engineering-lead",
-    identity: { name: "Engineering Lead", emoji: "wrench" },
-  },
-  "growth-expert": {
-    name: "growth-expert",
-    subdomain: "growth.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/growth-expert",
-    identity: { name: "Growth Expert", emoji: "chart_with_upwards_trend" },
-  },
-  "ceo-advisor": {
-    name: "ceo-advisor",
-    subdomain: "ceo.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/ceo-advisor",
-    identity: { name: "CEO Advisor", emoji: "briefcase" },
-  },
-  "strategy-consultant": {
-    name: "strategy-consultant",
-    subdomain: "strategy.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/strategy-consultant",
-    identity: { name: "Strategy Consultant", emoji: "chess_pawn" },
-  },
-  "design-director": {
-    name: "design-director",
-    subdomain: "design.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/design-director",
-    identity: { name: "Design Director", emoji: "art" },
-  },
-  "data-scientist": {
-    name: "data-scientist",
-    subdomain: "data.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/data-scientist",
-    identity: { name: "Data Scientist", emoji: "bar_chart" },
-  },
-  "marketing-director": {
-    name: "marketing-director",
-    subdomain: "marketing.openclaw",
-    instanceType: "t3.medium",
-    volumeSize: 30,
-    channels: ["slack"],
-    personaDir: ".claude/skills/deploy/personas/marketing-director",
-    identity: { name: "Marketing Director", emoji: "loudspeaker" },
-  },
-};
-
-// Load persona-specific .env
-export function loadPersonaEnv(personaName: string): Record<string, string> {
-  const envPath = path.join(__dirname, "..", `.env.${personaName}`);
-  if (!fs.existsSync(envPath)) {
-    throw new Error(`Persona env file not found: ${envPath}`);
-  }
-
-  const parsed = dotenv.parse(fs.readFileSync(envPath));
-  return parsed;
-}
-
-// Load workspace files (SOUL.md, IDENTITY.md, AGENTS.md) from persona directory
-export function loadWorkspaceFiles(personaDir: string): WorkspaceFiles {
-  const projectRoot = path.join(__dirname, "..", "..");
-  const dir = path.join(projectRoot, personaDir);
-
-  const soulPath = path.join(dir, "SOUL.md");
-  if (!fs.existsSync(soulPath)) {
-    throw new Error(`SOUL.md not found: ${soulPath}`);
-  }
-
-  const identityPath = path.join(dir, "IDENTITY.md");
-  const agentsPath = path.join(dir, "AGENTS.md");
-
-  return {
-    soul: fs.readFileSync(soulPath, "utf-8"),
-    identity: fs.existsSync(identityPath)
-      ? fs.readFileSync(identityPath, "utf-8")
-      : "",
-    agents: fs.existsSync(agentsPath)
-      ? fs.readFileSync(agentsPath, "utf-8")
-      : "",
-  };
-}
-
-// Require environment variable or throw descriptive error
 function requireEnv(key: string): string {
   const value = process.env[key];
   if (!value) {
@@ -158,7 +24,8 @@ function requireEnv(key: string): string {
   return value;
 }
 
-// AWS Infrastructure (loaded from infra/.env)
+// --- AWS Infrastructure (loaded from infra/.env) ---
+
 export const awsConfig = {
   vpcId: requireEnv("AWS_VPC_ID"),
   subnetId: requireEnv("AWS_SUBNET_ID"),
@@ -167,7 +34,6 @@ export const awsConfig = {
   baseDomain: requireEnv("BASE_DOMAIN"),
 };
 
-// Infrastructure settings (tags, ACME, SSH)
 export const infraConfig = {
   sshKeyPath: process.env.SSH_KEY_PATH || "~/.ssh/id_ed25519",
   acmeEmail: requireEnv("ACME_EMAIL"),
@@ -179,7 +45,123 @@ export const infraConfig = {
   },
 };
 
-// Load enabled personas based on ENABLED_PERSONAS env var
+// --- YAML Loading ---
+
+const PROJECT_ROOT = path.join(__dirname, "..", "..");
+const PERSONAS_DIR = path.join(PROJECT_ROOT, "personas");
+
+function loadDefaults(): Record<string, unknown> {
+  const defaultsPath = path.join(PERSONAS_DIR, "defaults.yml");
+  if (!fs.existsSync(defaultsPath)) {
+    return {};
+  }
+  return yaml.load(fs.readFileSync(defaultsPath, "utf-8")) as Record<
+    string,
+    unknown
+  >;
+}
+
+/**
+ * Deep-merge: 객체는 재귀 병합 (override 우선), 배열은 replace, null은 키 삭제
+ */
+function deepMerge(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>
+): Record<string, unknown> {
+  const result = { ...base };
+
+  for (const [key, val] of Object.entries(override)) {
+    if (val === null) {
+      // null → 키 삭제
+      delete result[key];
+    } else if (
+      Array.isArray(val) ||
+      typeof val !== "object" ||
+      val === undefined
+    ) {
+      // 배열, 원시값 → replace
+      result[key] = val;
+    } else if (
+      typeof result[key] === "object" &&
+      result[key] !== null &&
+      !Array.isArray(result[key])
+    ) {
+      // 양쪽 모두 객체 → 재귀 병합
+      result[key] = deepMerge(
+        result[key] as Record<string, unknown>,
+        val as Record<string, unknown>
+      );
+    } else {
+      result[key] = val;
+    }
+  }
+
+  return result;
+}
+
+function loadPersonaYaml(name: string): PersonaYaml {
+  const personaPath = path.join(PERSONAS_DIR, name, "persona.yml");
+  if (!fs.existsSync(personaPath)) {
+    throw new Error(`Persona file not found: ${personaPath}`);
+  }
+
+  const raw = yaml.load(fs.readFileSync(personaPath, "utf-8")) as Record<
+    string,
+    unknown
+  >;
+  const defaults = loadDefaults();
+  const merged = deepMerge(defaults, raw) as unknown as PersonaYaml;
+
+  validatePersonaYaml(name, merged);
+
+  return merged;
+}
+
+// --- Workspace Loading (glob-based) ---
+
+function loadWorkspaceDir(name: string): WorkspaceFile[] {
+  const workspaceDir = path.join(PERSONAS_DIR, name, "workspace");
+  if (!fs.existsSync(workspaceDir)) {
+    return [];
+  }
+
+  const files: WorkspaceFile[] = [];
+
+  function walk(dir: string, prefix: string): void {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue; // .DS_Store 등 무시
+
+      const fullPath = path.join(dir, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        walk(fullPath, relativePath);
+      } else if (entry.isFile()) {
+        files.push({
+          relativePath,
+          content: fs.readFileSync(fullPath, "utf-8"),
+        });
+      }
+    }
+  }
+
+  walk(workspaceDir, "");
+  return files;
+}
+
+// --- Secret Loading ---
+
+export function loadPersonaEnv(personaName: string): Record<string, string> {
+  const envPath = path.join(__dirname, "..", `.env.${personaName}`);
+  if (!fs.existsSync(envPath)) {
+    throw new Error(`Persona env file not found: ${envPath}`);
+  }
+  return dotenv.parse(fs.readFileSync(envPath));
+}
+
+// --- Main Entry ---
+
 export function getPersonas(): PersonaConfig[] {
   const enabled = (process.env.ENABLED_PERSONAS || "lab")
     .split(",")
@@ -187,35 +169,27 @@ export function getPersonas(): PersonaConfig[] {
     .filter(Boolean);
 
   return enabled.map((name) => {
-    const def = PERSONA_DEFINITIONS[name];
-    if (!def) {
-      const available = Object.keys(PERSONA_DEFINITIONS).join(", ");
-      throw new Error(`Unknown persona: "${name}". Available: ${available}`);
-    }
-
+    const yamlConfig = loadPersonaYaml(name);
     const env = loadPersonaEnv(name);
+    const workspace = loadWorkspaceDir(name);
 
-    const required = [
-      "OPENCLAW_GATEWAY_TOKEN",
-      "SLACK_BOT_TOKEN",
-      "SLACK_APP_TOKEN",
-      "ANTHROPIC_SETUP_TOKEN",
-    ];
-    for (const key of required) {
-      if (!env[key]) {
-        throw new Error(`Missing required env var in .env.${name}: ${key}`);
-      }
-    }
+    validateSecrets(name, yamlConfig.openclaw, env);
+    checkWorkspaceSize(name, workspace);
 
     return {
-      ...def,
-      env: {
-        PERSONA_NAME: env.PERSONA_NAME || name,
-        OPENCLAW_GATEWAY_TOKEN: env.OPENCLAW_GATEWAY_TOKEN,
-        SLACK_BOT_TOKEN: env.SLACK_BOT_TOKEN,
-        SLACK_APP_TOKEN: env.SLACK_APP_TOKEN,
-        ANTHROPIC_SETUP_TOKEN: env.ANTHROPIC_SETUP_TOKEN,
-      },
+      name,
+      subdomain: yamlConfig.subdomain,
+      instanceType: yamlConfig.instance?.type || "t3.medium",
+      volumeSize: yamlConfig.instance?.volumeSize || 30,
+      traefik: yamlConfig.infra?.traefik ?? true,
+      extensions: yamlConfig.infra?.extensions || [],
+      systemDeps: yamlConfig.infra?.systemDeps || [],
+      openclaw: yamlConfig.openclaw,
+      env,
+      workspace,
     };
   });
 }
+
+// Re-export for ec2.ts etc.
+export type { PersonaConfig, WorkspaceFile } from "./schema";

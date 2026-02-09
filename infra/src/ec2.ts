@@ -1,7 +1,7 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
-import { PersonaConfig, awsConfig, infraConfig, loadWorkspaceFiles } from "./config";
-import { generateUserData } from "./templates";
+import { PersonaConfig, awsConfig, infraConfig } from "./config";
+import { generateUserData } from "./userdata";
 
 // Get latest Amazon Linux 2023 AMI
 const ami = aws.ec2.getAmi({
@@ -24,8 +24,7 @@ export function createInstance(
   securityGroupId: pulumi.Input<string>
 ) {
   const domain = `${persona.subdomain}.${awsConfig.baseDomain}`;
-  const workspaceFiles = loadWorkspaceFiles(persona.personaDir);
-  const userData = generateUserData(persona, domain, workspaceFiles);
+  const userData = generateUserData(persona, domain);
 
   return new aws.ec2.Instance(`openclaw-${persona.name}`, {
     ami: ami.then((a) => a.id),

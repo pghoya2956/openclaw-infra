@@ -11,4 +11,8 @@ instance:
 infra:
   traefik: true               # HTTPS 리버스 프록시 (와일드카드 인증서)
   extensions: []              # 확장 채널 npm 패키지
-  systemDeps: []              # 추가 시스템 패키지
+  systemDeps:                 # 추가 시스템 패키지
+    - tmux                      # tmux 스킬 의존성
+  npmGlobals:                   # 추가 글로벌 npm 패키지
+    - clawhub                   # ClawHub 스킬 레지스트리 CLI
+    - "@steipete/summarize"     # summarize 스킬 의존성

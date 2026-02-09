@@ -110,6 +110,7 @@ function loadInstanceYaml(): InstanceConfig {
     traefik: raw.infra?.traefik ?? true,
     extensions: raw.infra?.extensions || [],
     systemDeps: raw.infra?.systemDeps || [],
+    npmGlobals: raw.infra?.npmGlobals || [],
   };
 }
 

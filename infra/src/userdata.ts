@@ -122,6 +122,12 @@ function installSystemDeps(deps: string[]): string {
 dnf install -y ${deps.join(" ")}`;
 }
 
+function installNpmGlobals(packages: string[]): string {
+  if (packages.length === 0) return "";
+  return `# --- Global npm packages (스킬 의존성 등) ---
+npm install -g ${packages.join(" ")}`;
+}
+
 function installExtensions(packages: string[]): string {
   if (packages.length === 0) return "";
   return `# --- OpenClaw extension channels ---
@@ -308,6 +314,7 @@ export function generateUserData(
     ``,
     installBase(),
     installSystemDeps(config.instance.systemDeps),
+    installNpmGlobals(config.instance.npmGlobals),
     installExtensions(config.instance.extensions),
     ``,
     injectEnvVars(config.env),

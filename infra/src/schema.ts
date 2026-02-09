@@ -27,6 +27,7 @@ export interface InstanceYaml {
     traefik: boolean;
     extensions: string[];
     systemDeps: string[];
+    npmGlobals?: string[];
   };
 }
 
@@ -39,6 +40,7 @@ export interface InstanceConfig {
   traefik: boolean;
   extensions: string[];
   systemDeps: string[];
+  npmGlobals: string[];
 }
 
 export interface AgentConfig {

@@ -111,6 +111,7 @@ function loadInstanceYaml(): InstanceConfig {
     extensions: raw.infra?.extensions || [],
     systemDeps: raw.infra?.systemDeps || [],
     npmGlobals: raw.infra?.npmGlobals || [],
+    binaryTools: raw.infra?.binaryTools || [],
   };
 }
 

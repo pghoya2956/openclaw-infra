@@ -28,6 +28,7 @@ export interface InstanceYaml {
     extensions: string[];
     systemDeps: string[];
     npmGlobals?: string[];
+    binaryTools?: string[];
   };
 }
 
@@ -41,6 +42,7 @@ export interface InstanceConfig {
   extensions: string[];
   systemDeps: string[];
   npmGlobals: string[];
+  binaryTools: string[];
 }
 
 export interface AgentConfig {

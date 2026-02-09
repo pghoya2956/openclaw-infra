@@ -134,6 +134,52 @@ function installExtensions(packages: string[]): string {
 npm install -g ${packages.join(" ")}`;
 }
 
+// AL2023 dnf에 없는 바이너리 도구 설치 (GitHub Releases)
+const BINARY_TOOL_REGISTRY: Record<
+  string,
+  { version: string; url: string; extractPath: string }
+> = {
+  rg: {
+    version: "14.1.1",
+    url: "https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-x86_64-unknown-linux-musl.tar.gz",
+    extractPath: "ripgrep-{version}-x86_64-unknown-linux-musl/rg",
+  },
+  gh: {
+    version: "2.64.0",
+    url: "https://github.com/cli/cli/releases/download/v{version}/gh_{version}_linux_amd64.tar.gz",
+    extractPath: "gh_{version}_linux_amd64/bin/gh",
+  },
+};
+
+function installBinaryTools(tools: string[]): string {
+  if (tools.length === 0) return "";
+
+  const commands = tools.map((tool) => {
+    const entry = BINARY_TOOL_REGISTRY[tool];
+    if (!entry) {
+      throw new Error(
+        `Unknown binary tool: ${tool}. Known tools: ${Object.keys(BINARY_TOOL_REGISTRY).join(", ")}`
+      );
+    }
+
+    const url = entry.url.replace(/\{version\}/g, entry.version);
+    const extractPath = entry.extractPath.replace(
+      /\{version\}/g,
+      entry.version
+    );
+
+    return `curl -fsSL "${url}" -o /tmp/${tool}.tar.gz \\
+  && tar xzf /tmp/${tool}.tar.gz -C /tmp \\
+  && cp /tmp/${extractPath} /usr/bin/${tool} \\
+  && chmod +x /usr/bin/${tool} \\
+  && rm -rf /tmp/${tool}.tar.gz /tmp/${extractPath.split("/")[0]} \\
+  && echo "${tool} $(${tool} --version 2>&1 | head -1)"`;
+  });
+
+  return `# --- Binary tools (AL2023 dnf에 없는 도구) ---
+${commands.join("\n\n")}`;
+}
+
 function downloadWorkspace(bucketName: string): string {
   return `# --- Download workspace from S3 ---
 aws s3 cp s3://${bucketName}/workspace-manifest.json /tmp/workspace-manifest.json
@@ -314,6 +360,7 @@ export function generateUserData(
     ``,
     installBase(),
     installSystemDeps(config.instance.systemDeps),
+    installBinaryTools(config.instance.binaryTools),
     installNpmGlobals(config.instance.npmGlobals),
     installExtensions(config.instance.extensions),
     ``,

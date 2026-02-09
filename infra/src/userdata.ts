@@ -1,17 +1,20 @@
 /**
- * userdata.ts — EC2 User Data 스크립트 생성 (모듈화)
+ * userdata.ts — EC2 User Data 스크립트 생성 (통합형 멀티에이전트)
  *
- * 각 함수가 독립된 bash 스크립트 조각을 반환한다.
- * 채널/도구 등의 이름이 코드에 등장하지 않음 (channel-agnostic).
+ * S3에서 워크스페이스 다운로드, 통합 openclaw.json 배포,
+ * 와일드카드 Traefik 설정.
  */
 
-import { PersonaConfig, WorkspaceFile } from "./schema";
-import { infraConfig } from "./config";
+import { DeployConfig } from "./schema";
+import { infraConfig, awsConfig } from "./config";
 import { generateOpenclawConfig } from "./openclaw-config";
 
-// --- Traefik configs ---
+// --- Traefik configs (와일드카드 DNS Challenge) ---
 
-function generateTraefikCompose(domain: string, acmeEmail: string): string {
+function generateTraefikCompose(
+  baseDomain: string,
+  acmeEmail: string
+): string {
   return `services:
   traefik:
     image: traefik:v3.0
@@ -20,8 +23,9 @@ function generateTraefikCompose(domain: string, acmeEmail: string): string {
       - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=route53"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.delayBeforeCheck=30"
       - "--certificatesresolvers.letsencrypt.acme.email=${acmeEmail}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
@@ -50,16 +54,21 @@ volumes:
 `;
 }
 
-function generateTraefikDynamic(domain: string): string {
+function generateTraefikDynamic(
+  baseDomain: string,
+  wildcardDomain: string
+): string {
   return `http:
   routers:
     openclaw:
-      rule: "Host(\`${domain}\`)"
+      rule: "HostRegexp(\`{subdomain:[a-z-]+}.openclaw.${baseDomain}\`)"
       entryPoints:
         - websecure
       service: openclaw
       tls:
         certResolver: letsencrypt
+        domains:
+          - main: "${wildcardDomain}"
   services:
     openclaw:
       loadBalancer:
@@ -69,6 +78,22 @@ function generateTraefikDynamic(domain: string): string {
 }
 
 // --- Modular bash steps ---
+
+function setupSwap(sizeGB: number): string {
+  if (sizeGB <= 0) return "";
+  return `# --- Swap (${sizeGB}GB — Node.js 힙 미반환 + 메모리 릭 대비) ---
+fallocate -l ${sizeGB}G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+
+# swappiness: 비활성 페이지를 적극적으로 swap (기본 60 → 10)
+# Node.js GC가 해제하지 않는 old generation 힙을 swap으로 내보냄
+sysctl vm.swappiness=10
+echo 'vm.swappiness=10' >> /etc/sysctl.conf
+echo "=== Swap ${sizeGB}GB configured ==="`;
+}
 
 function installBase(): string {
   return `# --- Node.js 22 + Docker ---
@@ -101,44 +126,36 @@ function installExtensions(packages: string[]): string {
 npm install -g ${packages.join(" ")}`;
 }
 
-function deployWorkspace(files: WorkspaceFile[]): string {
-  if (files.length === 0) return "";
+function downloadWorkspace(bucketName: string): string {
+  return `# --- Download workspace from S3 ---
+aws s3 cp s3://${bucketName}/workspace-manifest.json /tmp/workspace-manifest.json
+echo "=== Workspace manifest downloaded ==="
 
-  const lines = [
-    `# --- Workspace files (BEFORE onboard -- writeFileIfMissing won't overwrite) ---`,
-    `WORKSPACE_DIR=/home/ec2-user/.openclaw/workspace`,
-    `sudo -u ec2-user mkdir -p $WORKSPACE_DIR`,
-  ];
+# --- Deploy workspace files from manifest ---
+sudo -u ec2-user node -e "
+  const fs = require('fs');
+  const path = require('path');
+  const manifest = JSON.parse(fs.readFileSync('/tmp/workspace-manifest.json', 'utf8'));
 
-  for (const file of files) {
-    // 하위 디렉토리가 있으면 생성
-    const dir = file.relativePath.includes("/")
-      ? file.relativePath.substring(0, file.relativePath.lastIndexOf("/"))
-      : null;
+  for (const [agentId, files] of Object.entries(manifest)) {
+    const wsDir = path.join('/home/ec2-user/.openclaw', 'workspace-' + agentId);
 
-    if (dir) {
-      lines.push(`sudo -u ec2-user mkdir -p $WORKSPACE_DIR/${dir}`);
+    for (const file of files) {
+      const filePath = path.join(wsDir, file.relativePath);
+      const dir = path.dirname(filePath);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(filePath, file.content);
     }
 
-    // heredoc delimiter를 파일별로 고유하게 생성
-    const safeName = file.relativePath
-      .replace(/[^a-zA-Z0-9]/g, "_")
-      .toUpperCase();
-    const delimiter = `WS_${safeName}_EOF`;
-
-    lines.push(`cat > $WORKSPACE_DIR/${file.relativePath} << '${delimiter}'`);
-    lines.push(file.content);
-    lines.push(delimiter);
-    lines.push(
-      `chown ec2-user:ec2-user $WORKSPACE_DIR/${file.relativePath}`
-    );
+    console.log('Deployed workspace for ' + agentId + ': ' + files.length + ' files');
   }
+"
 
-  lines.push(`echo "=== Workspace files deployed (${files.length} files) ==="`);
-  return lines.join("\n");
+chown -R ec2-user:ec2-user /home/ec2-user/.openclaw/workspace-*
+echo "=== All workspaces deployed ==="`;
 }
 
-function runOnboard(persona: PersonaConfig): string {
+function runOnboard(): string {
   return `# --- OpenClaw onboard (non-interactive) ---
 EC2_USER_UID=$(id -u ec2-user)
 sudo -u ec2-user \\
@@ -161,15 +178,14 @@ echo "=== onboard completed ==="`;
 }
 
 function writeOpenclawConfig(configJson: string): string {
-  return `# --- OpenClaw config (deep-merge with onboard defaults) ---
-# onboard가 생성한 openclaw.json을 읽고, persona config를 merge한다
+  return `# --- OpenClaw config (통합 — onboard defaults에 merge) ---
 sudo -u ec2-user \\
   OPENCLAW_STATE_DIR=$STATE_DIR \\
   node -e "
     const fs = require('fs');
     const configPath = '$STATE_DIR/openclaw.json';
     const base = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    const override = JSON.parse(fs.readFileSync('/tmp/persona-config.json', 'utf8'));
+    const override = JSON.parse(fs.readFileSync('/tmp/openclaw-config.json', 'utf8'));
 
     function deepMerge(b, o) {
       const r = { ...b };
@@ -186,12 +202,11 @@ sudo -u ec2-user \\
     const merged = deepMerge(base, override);
     fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
   "
-rm /tmp/persona-config.json
+rm /tmp/openclaw-config.json
 echo "=== openclaw.json merged ==="`;
 }
 
 function injectEnvVars(env: Record<string, string>): string {
-  // .env.{name}의 모든 키-값을 EC2 .env에 기록 — 채널 비의존
   const envLines = [
     `OPENCLAW_STATE_DIR=/opt/openclaw`,
     `OPENCLAW_DISABLE_BONJOUR=1`,
@@ -237,11 +252,15 @@ sudo -u ec2-user \\
   systemctl --user restart openclaw-gateway || true`;
 }
 
-function startTraefik(domain: string): string {
-  const traefikCompose = generateTraefikCompose(domain, infraConfig.acmeEmail);
-  const traefikDynamic = generateTraefikDynamic(domain);
+function startTraefik(baseDomain: string): string {
+  const wildcardDomain = `*.openclaw.${baseDomain}`;
+  const traefikCompose = generateTraefikCompose(
+    baseDomain,
+    infraConfig.acmeEmail
+  );
+  const traefikDynamic = generateTraefikDynamic(baseDomain, wildcardDomain);
 
-  return `# --- Traefik (HTTPS reverse proxy) ---
+  return `# --- Traefik (HTTPS reverse proxy — 와일드카드 DNS Challenge) ---
 systemctl enable --now docker
 
 cat > $STATE_DIR/traefik-dynamic.yml << 'DYNAMICEOF'
@@ -254,24 +273,28 @@ cd $STATE_DIR
 docker compose up -d`;
 }
 
-function writePersonaConfigFile(configJson: string): string {
-  return `# --- Persona config (temporary, for merge) ---
-cat > /tmp/persona-config.json << 'PCEOF'
+function writeConfigFile(configJson: string): string {
+  return `# --- OpenClaw config (temporary, for merge) ---
+cat > /tmp/openclaw-config.json << 'PCEOF'
 ${configJson}
 PCEOF`;
 }
 
 // --- Main entry ---
 
-export function generateUserData(persona: PersonaConfig, domain: string): string {
-  const configJson = generateOpenclawConfig(persona);
+export function generateUserData(
+  config: DeployConfig,
+  bucketName: string
+): string {
+  const configJson = generateOpenclawConfig(config);
 
   const steps = [
     `#!/bin/bash`,
     `set -euo pipefail`,
     `exec > >(tee /var/log/user-data.log) 2>&1`,
     `echo "=== User Data started at $(date) ==="`,
-    `echo "=== Persona: ${persona.name} ==="`,
+    `echo "=== Unified Multi-Agent Deployment ==="`,
+    `echo "=== Agents: ${config.agents.map((a) => a.id).join(", ")} ==="`,
     ``,
     `# --- State directory ---`,
     `STATE_DIR=/opt/openclaw`,
@@ -279,26 +302,27 @@ export function generateUserData(persona: PersonaConfig, domain: string): string
     `chown ec2-user:ec2-user $STATE_DIR`,
     `chmod 700 $STATE_DIR`,
     ``,
+    setupSwap(config.instance.swapSizeGB),
+    ``,
     installBase(),
-    installSystemDeps(persona.systemDeps),
-    installExtensions(persona.extensions),
+    installSystemDeps(config.instance.systemDeps),
+    installExtensions(config.instance.extensions),
     ``,
-    injectEnvVars(persona.env),
+    injectEnvVars(config.env),
     ``,
-    deployWorkspace(persona.workspace),
+    downloadWorkspace(bucketName),
     ``,
-    runOnboard(persona),
+    runOnboard(),
     ``,
-    writePersonaConfigFile(configJson),
+    writeConfigFile(configJson),
     writeOpenclawConfig(configJson),
     ``,
     setupSystemdEnv(),
   ];
 
-  // Traefik은 조건부
-  if (persona.traefik) {
+  if (config.instance.traefik) {
     steps.push(``);
-    steps.push(startTraefik(domain));
+    steps.push(startTraefik(awsConfig.baseDomain));
   }
 
   steps.push(``);

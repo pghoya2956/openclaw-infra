@@ -1,16 +1,19 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
-import { PersonaConfig, awsConfig } from "./config";
+import { AgentConfig, awsConfig } from "./config";
 
-export function createDnsRecord(
-  persona: PersonaConfig,
+export function createDnsRecords(
+  agents: AgentConfig[],
   publicIp: pulumi.Output<string>
 ) {
-  return new aws.route53.Record(`openclaw-${persona.name}-dns`, {
-    zoneId: awsConfig.hostedZoneId,
-    name: persona.subdomain,
-    type: "A",
-    ttl: 300,
-    records: [publicIp],
-  });
+  return agents.map(
+    (agent) =>
+      new aws.route53.Record(`openclaw-${agent.id}-dns`, {
+        zoneId: awsConfig.hostedZoneId,
+        name: agent.subdomain,
+        type: "A",
+        ttl: 300,
+        records: [publicIp],
+      })
+  );
 }

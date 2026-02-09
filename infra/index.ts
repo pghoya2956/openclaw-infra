@@ -1,27 +1,45 @@
 import * as pulumi from "@pulumi/pulumi";
-import { getPersonas, awsConfig, infraConfig } from "./src/config";
+import { getDeployConfig, awsConfig, infraConfig } from "./src/config";
+import { createIamResources } from "./src/iam";
+import { createS3Resources } from "./src/s3";
 import { createSecurityGroup } from "./src/security";
 import { createInstance } from "./src/ec2";
-import { createDnsRecord } from "./src/dns";
+import { createDnsRecords } from "./src/dns";
 
-// Phase 1: Multi-persona deployment
-const personas = getPersonas();
+// --- Load config ---
+const config = getDeployConfig();
 
-// Shared Security Group (keep "lab" resource name to prevent Pulumi replace)
+// --- S3 (워크스페이스 업로드) ---
+const { bucketName, bucketArn } = createS3Resources(config.agents);
+
+// --- IAM (S3 + Route53 권한) ---
+const { instanceProfile } = createIamResources(
+  bucketArn,
+  awsConfig.hostedZoneId
+);
+
+// --- Security Group (keep "lab" resource name to prevent Pulumi replace) ---
 const securityGroup = createSecurityGroup("lab");
 
-// Per-persona resources
-const results = personas.map((persona) => {
-  const instance = createInstance(persona, securityGroup.id);
-  const dns = createDnsRecord(persona, instance.publicIp);
-  return { persona, instance, dns };
-});
+// --- EC2 (단일 통합 인스턴스) ---
+const instance = createInstance(
+  config,
+  securityGroup.id,
+  instanceProfile.name,
+  bucketName
+);
 
-// Exports
-export const deployedPersonas = results.map((r) => ({
-  name: r.persona.name,
-  instanceId: r.instance.id,
-  publicIp: r.instance.publicIp,
-  domain: `${r.persona.subdomain}.${awsConfig.baseDomain}`,
-  sshCommand: pulumi.interpolate`ssh -i ${infraConfig.sshKeyPath} ec2-user@${r.instance.publicIp}`,
-}));
+// --- DNS (에이전트별 A record → 동일 IP) ---
+const dnsRecords = createDnsRecords(config.agents, instance.publicIp);
+
+// --- Exports ---
+export const deployment = {
+  instanceId: instance.id,
+  publicIp: instance.publicIp,
+  agents: config.agents.map((a) => ({
+    id: a.id,
+    domain: `${a.subdomain}.${awsConfig.baseDomain}`,
+  })),
+  sshCommand: pulumi.interpolate`ssh -i ${infraConfig.sshKeyPath} ec2-user@${instance.publicIp}`,
+  s3Bucket: bucketName,
+};

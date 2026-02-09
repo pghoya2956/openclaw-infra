@@ -1,6 +1,6 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
-import { PersonaConfig, awsConfig, infraConfig } from "./config";
+import { DeployConfig, awsConfig, infraConfig } from "./config";
 import { generateUserData } from "./userdata";
 
 // Get latest Amazon Linux 2023 AMI
@@ -20,22 +20,28 @@ const ami = aws.ec2.getAmi({
 });
 
 export function createInstance(
-  persona: PersonaConfig,
-  securityGroupId: pulumi.Input<string>
+  config: DeployConfig,
+  securityGroupId: pulumi.Input<string>,
+  instanceProfileName: pulumi.Input<string>,
+  s3BucketId: pulumi.Output<string>
 ) {
-  const domain = `${persona.subdomain}.${awsConfig.baseDomain}`;
-  const userData = generateUserData(persona, domain);
+  // User Data 스크립트에 S3 버킷 이름을 주입
+  // Pulumi Output → apply로 최종 스크립트 생성
+  const userData = s3BucketId.apply((bucketName) =>
+    generateUserData(config, bucketName)
+  );
 
-  return new aws.ec2.Instance(`openclaw-${persona.name}`, {
+  return new aws.ec2.Instance("openclaw-unified", {
     ami: ami.then((a) => a.id),
-    instanceType: persona.instanceType,
+    instanceType: config.instance.type,
     subnetId: awsConfig.subnetId,
     vpcSecurityGroupIds: [securityGroupId],
     keyName: awsConfig.keyName,
     associatePublicIpAddress: true,
+    iamInstanceProfile: instanceProfileName,
 
     rootBlockDevice: {
-      volumeSize: persona.volumeSize,
+      volumeSize: config.instance.volumeSize,
       volumeType: "gp3",
       deleteOnTermination: true,
     },
@@ -44,9 +50,10 @@ export function createInstance(
     userDataReplaceOnChange: true,
 
     tags: {
-      Name: `openclaw-${persona.name}`,
+      Name: "openclaw-unified",
       Project: "OpenClaw",
-      Persona: persona.name,
+      Architecture: "unified-multiagent",
+      Agents: config.agents.map((a) => a.id).join(","),
       ...infraConfig.tags,
     },
   });

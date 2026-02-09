@@ -1,16 +1,14 @@
 /**
- * openclaw-config.ts — persona.yml의 openclaw 섹션을 openclaw.json 문자열로 변환
+ * openclaw-config.ts — 통합 openclaw.json 생성
  *
- * onboard가 생성하는 기본 openclaw.json에 persona config를 deep-merge한다.
- * 실제로는 빌드 타임에 최종 config를 생성하고, EC2에서 onboard 후 파일을 교체한다.
+ * 모든 에이전트의 설정을 하나의 openclaw.json으로 합성한다.
+ * agents.list[], bindings[], channels.slack.accounts를 자동 생성.
  */
 
-import { PersonaConfig } from "./schema";
+import { DeployConfig } from "./schema";
 
 /**
  * onboard가 생성하는 기본 openclaw.json 구조.
- * onboard --non-interactive가 설정하는 최소 필드만 포함.
- * 나머지는 persona.yml의 openclaw 섹션으로 덮어쓴다.
  */
 function getOnboardDefaults(): Record<string, unknown> {
   return {
@@ -56,16 +54,61 @@ function deepMerge(
 }
 
 /**
- * persona.yml의 openclaw 섹션을 최종 openclaw.json 문자열로 변환한다.
+ * 통합 openclaw.json을 생성한다.
  *
  * 흐름:
- *   onboard 기본값 + persona.yml openclaw → deep-merge → JSON 문자열
- *
- * onboard가 먼저 실행되어 기본 구조를 만들고,
- * 이 함수의 출력이 EC2에서 openclaw.json을 교체한다.
+ *   onboard 기본값 + defaults.yml openclaw → deep-merge
+ *   + agents.list[] (에이전트별)
+ *   + bindings[] (Slack accountId → agentId)
+ *   + channels.slack.accounts (${VAR} 치환 참조)
  */
-export function generateOpenclawConfig(persona: PersonaConfig): string {
+export function generateOpenclawConfig(config: DeployConfig): string {
   const base = getOnboardDefaults();
-  const merged = deepMerge(base, persona.openclaw);
-  return JSON.stringify(merged, null, 2);
+  const merged = deepMerge(base, config.openclaw);
+
+  // agents.list 생성
+  const agentsList = config.agents.map((agent, i) => ({
+    id: agent.id,
+    workspace: `/home/ec2-user/.openclaw/workspace-${agent.id}`,
+    ...(i === 0 ? { default: true } : {}),
+  }));
+
+  // bindings 생성 (Slack accountId → agentId)
+  const bindings = config.agents.map((agent) => ({
+    agentId: agent.id,
+    match: {
+      channel: "slack",
+      accountId: agent.slackAccount,
+    },
+  }));
+
+  // channels.slack.accounts 생성 (${VAR} 치환 참조)
+  const accounts: Record<string, Record<string, string>> = {};
+  for (const agent of config.agents) {
+    const suffix = agent.slackAccount.toUpperCase();
+    accounts[agent.slackAccount] = {
+      botToken: `\${SLACK_BOT_TOKEN__${suffix}}`,
+      appToken: `\${SLACK_APP_TOKEN__${suffix}}`,
+    };
+  }
+
+  // 최종 config 합성
+  const final = {
+    ...merged,
+    agents: {
+      ...(merged.agents as Record<string, unknown> | undefined),
+      list: agentsList,
+    },
+    bindings,
+    channels: deepMerge(
+      (merged.channels || {}) as Record<string, unknown>,
+      {
+        slack: {
+          accounts,
+        },
+      }
+    ),
+  };
+
+  return JSON.stringify(final, null, 2);
 }

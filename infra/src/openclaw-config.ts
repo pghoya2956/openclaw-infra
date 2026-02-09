@@ -89,6 +89,7 @@ export function generateOpenclawConfig(config: DeployConfig): string {
     accounts[agent.slackAccount] = {
       botToken: `\${SLACK_BOT_TOKEN__${suffix}}`,
       appToken: `\${SLACK_APP_TOKEN__${suffix}}`,
+      groupPolicy: "open",
     };
   }
 

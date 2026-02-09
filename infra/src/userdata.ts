@@ -35,6 +35,8 @@ function generateTraefikCompose(
     volumes:
       - /opt/openclaw/traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
       - letsencrypt:/letsencrypt
+    environment:
+      - AWS_REGION=ap-northeast-2
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

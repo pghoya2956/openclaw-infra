@@ -49,6 +49,12 @@ export function createInstance(
     userData: userData,
     userDataReplaceOnChange: true,
 
+    metadataOptions: {
+      httpTokens: "required",
+      httpPutResponseHopLimit: 2, // Docker 컨테이너에서 IMDS 접근 (Traefik Route53)
+      httpEndpoint: "enabled",
+    },
+
     tags: {
       Name: "openclaw-unified",
       Project: "OpenClaw",

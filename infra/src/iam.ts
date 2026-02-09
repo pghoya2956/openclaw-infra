@@ -44,7 +44,12 @@ export function createIamResources(
       Statement: [
         {
           Effect: "Allow",
-          Action: ["route53:GetChange", "route53:ListHostedZones"],
+          Action: [
+            "route53:GetChange",
+            "route53:ListHostedZones",
+            "route53:ListHostedZonesByName",
+            "route53:ListResourceRecordSets",
+          ],
           Resource: "*",
         },
         {

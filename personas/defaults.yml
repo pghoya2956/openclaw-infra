@@ -15,6 +15,7 @@ openclaw:
     defaults:
       groupPolicy: open
     slack:
+      groupPolicy: open
       replyToMode: all
 
   gateway:

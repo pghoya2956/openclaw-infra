@@ -40,11 +40,13 @@ OpenClaw/
 
 ## 명령어
 
+**AWS 프로필**: 반드시 `AWS_PROFILE=sandbox`를 붙여야 한다. 로컬 default 프로필이 다른 계정이라 누락 시 권한 오류 발생.
+
 ```bash
 # Pulumi
-pulumi preview
-pulumi up
-pulumi destroy
+AWS_PROFILE=sandbox pulumi preview
+AWS_PROFILE=sandbox pulumi up
+AWS_PROFILE=sandbox pulumi destroy
 
 # SSH
 ssh -i ~/.ssh/id_ed25519 ec2-user@<IP>
